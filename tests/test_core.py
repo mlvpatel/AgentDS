@@ -8,13 +8,7 @@ Author: Malav Patel
 
 from __future__ import annotations
 
-import json
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
 import pytest
-
 
 # =============================================================================
 # Configuration Tests
@@ -35,6 +29,7 @@ class TestSettings:
     def test_environment_override(self):
         """Test environment variable override."""
         import os
+
         from agentds.core.config import Settings
 
         os.environ["DEBUG"] = "true"
@@ -94,6 +89,7 @@ class TestCacheLayer:
     def test_memory_cache_ttl(self):
         """Test memory cache TTL."""
         import time
+
         from agentds.core.cache_layer import MemoryCache
 
         cache = MemoryCache()
@@ -134,7 +130,7 @@ class TestJobQueue:
         from agentds.core.job_queue import Job, JobStatus
 
         job = Job(name="Test Job", task="test_task")
-        
+
         job.mark_running()
         assert job.status == JobStatus.RUNNING
         assert job.started_at is not None
@@ -265,7 +261,7 @@ class TestLogger:
 
     def test_log_context(self):
         """Test log context manager."""
-        from agentds.core.logger import LogContext, job_id_ctx, agent_ctx
+        from agentds.core.logger import LogContext, agent_ctx, job_id_ctx
 
         with LogContext(job_id="test-123", agent="TestAgent"):
             assert job_id_ctx.get() == "test-123"

@@ -110,6 +110,8 @@ packages = ["agentds"]
 [tool.ruff]
 target-version = "py310"
 line-length = 100
+
+[tool.ruff.lint]
 select = [
     "E",      # pycodestyle errors
     "W",      # pycodestyle warnings
@@ -126,11 +128,15 @@ ignore = [
     "B008",   # do not perform function calls in argument defaults
     "C901",   # too complex
     "ARG001", # unused function argument
+    "ARG002", # unused method argument (many false positives for future use)
+    "SIM117", # nested with statements (sometimes more readable)
+    "SIM113", # enumerate suggestion (not always applicable)
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests/*" = ["ARG001", "S101"]
+"tests/*" = ["ARG001", "S101", "ARG002"]
+"agentds/agents/api_wrapper.py" = ["F821"]  # False positive on list comprehension variable
 
 [tool.mypy]
 python_version = "3.10"

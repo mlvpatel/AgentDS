@@ -8,11 +8,8 @@ Author: Malav Patel
 
 from __future__ import annotations
 
-import json
-import tempfile
 from pathlib import Path
-from typing import Any, Dict
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -21,23 +18,20 @@ from agentds.agents import (
     AgentAction,
     AgentResult,
     AgentStatus,
-    BaseAgent,
-    DataLoaderAgent,
+    APIWrapperAgent,
+    AutoMLAgent,
+    CloudDeployAgent,
     DataCleaningAgent,
+    DataLoaderAgent,
+    DevOpsAgent,
+    DriftMonitorAgent,
     EDACopilotAgent,
     FeatureEngineerAgent,
-    AutoMLAgent,
-    APIWrapperAgent,
-    DevOpsAgent,
-    CloudDeployAgent,
-    DriftMonitorAgent,
     OptimizationAgent,
 )
 from agentds.agents.base import AgentContext
-from agentds.core.config import Settings
 from agentds.core.artifact_store import ArtifactStore
-from agentds.core.llm_gateway import LLMGateway, LLMResponse
-
+from agentds.core.config import Settings
 
 # =============================================================================
 # Base Agent Tests
@@ -326,7 +320,7 @@ class TestAgentIntegration:
         # This is a simplified integration test
         # In production, use the full pipeline
 
-        context = AgentContext(
+        _context = AgentContext(
             job_id="integration-test-001",
             settings=mock_settings,
             llm_gateway=mock_llm_gateway,
