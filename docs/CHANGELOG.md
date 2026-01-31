@@ -132,14 +132,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Roadmap
 
-### v2.1.0 (Planned)
+### v1.1.0 (Planned)
 
 - [ ] Multi-agent collaboration
 - [ ] Natural language pipeline definition
 - [ ] Streaming inference support
 - [ ] Additional cloud deployments
 
-### v2.2.0 (Planned)
+### v1.2.0 (Planned)
 
 - [ ] Notebook integration
 - [ ] Custom agent creation wizard

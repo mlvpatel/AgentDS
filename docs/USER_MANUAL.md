@@ -35,8 +35,8 @@ Before using AgentDS, ensure you have:
 
 ```bash
 # Clone repository
-git clone https://github.com/mlvpatel/agentds-v2.git
-cd agentds-v2
+git clone https://github.com/mlvpatel/AgentDS.git
+cd AgentDS
 
 # Create virtual environment
 python -m venv venv
