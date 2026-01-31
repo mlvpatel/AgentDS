@@ -157,7 +157,7 @@ class AgentDSPipeline:
             for agent_name in self.PHASE_AGENTS.get(phase, []):
                 if agent_name in AGENT_REGISTRY:
                     agent_class = AGENT_REGISTRY[agent_name]
-                    self._agents[agent_name] = agent_class(
+                    self._agents[agent_name] = agent_class(  # type: ignore[abstract]
                         settings=self.settings,
                         llm_gateway=self.llm_gateway,
                         artifact_store=self.artifact_store,

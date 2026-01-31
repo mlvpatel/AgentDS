@@ -340,7 +340,7 @@ async def predict(data: PredictionInput) -> PredictionOutput:
         raise ValueError("Model not loaded")
 
     # Create DataFrame with correct column names
-    input_data = {field: [getattr(data, field)] for field in data.model_fields.keys()}
+    input_data = {field: [getattr(data, field)] for field in data.model_fields.keys()}  # type: ignore[name-defined]
     features = pd.DataFrame(input_data)
 
     # Apply preprocessing if available
@@ -379,7 +379,7 @@ async def predict_batch(data: BatchInput) -> BatchOutput:
     predictions = []
     for instance in data.instances:
         # Create DataFrame for single instance
-        input_data = {field: [getattr(instance, field)] for field in instance.model_fields.keys()}
+        input_data = {field: [getattr(instance, field)] for field in instance.model_fields.keys()}  # type: ignore[name-defined]
         features = pd.DataFrame(input_data)
 
         pipeline = get_pipeline()

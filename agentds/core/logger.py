@@ -194,7 +194,7 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
     return structlog.get_logger(name)
 
 
-def get_logfire_span(name: str, **attributes: Any):
+def get_logfire_span(name: str, **attributes: Any) -> Any:
     """
     Get a Logfire span for tracing.
 

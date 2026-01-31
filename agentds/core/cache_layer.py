@@ -299,7 +299,9 @@ class CacheLayer:
         Returns:
             Cached or computed value
         """
-        value = self.get(key)
+        from typing import Any as AnyType
+        
+        value: AnyType = self.get(key)
         if value is not None:
             return value
 

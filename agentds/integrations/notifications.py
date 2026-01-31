@@ -28,7 +28,7 @@ class Notification:
     message: str
     level: str = "info"  # info, warning, error, success
     timestamp: str = ""
-    metadata: dict[str, Any] = None
+    metadata: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         """Set defaults after init."""

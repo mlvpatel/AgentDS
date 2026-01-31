@@ -155,7 +155,7 @@ def agent(ctx: click.Context, agent_name: str, data_source: str, output: str) ->
 
     settings = get_settings()
     agent_class = AGENT_REGISTRY[agent_name]
-    agent_instance = agent_class(settings=settings)
+    agent_instance = agent_class(settings=settings)  # type: ignore[abstract]
 
     context = AgentContext(
         job_id=str(uuid.uuid4()),
@@ -231,7 +231,7 @@ def status(ctx: click.Context) -> None:
 @click.pass_context
 def config(ctx: click.Context) -> None:
     """Display current configuration."""
-    import yaml
+    import yaml  # type: ignore[import-untyped]
 
     settings = get_settings()
 

@@ -163,7 +163,7 @@ Best practices:
         import docker
 
         try:
-            client = docker.from_env()
+            client = docker.from_env()  # type: ignore[attr-defined,unused-ignore]
         except Exception as e:
             raise RuntimeError(f"Docker daemon not available: {e}") from e
 

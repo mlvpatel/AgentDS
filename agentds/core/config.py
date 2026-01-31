@@ -227,7 +227,7 @@ class Settings(BaseSettings):
         """Check if a feature flag is enabled."""
         features = self.get_feature_flags()
         feature = features.get(feature_name, {})
-        return feature.get("enabled", False)
+        return bool(feature.get("enabled", False))
 
 
 @lru_cache

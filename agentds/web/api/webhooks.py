@@ -328,7 +328,7 @@ async def run_agent(data: AgentRunRequest) -> dict[str, Any]:
     try:
         # Create agent
         agent_class = AGENT_REGISTRY[data.agent_name]
-        agent = agent_class(settings=settings)
+        agent = agent_class(settings=settings)  # type: ignore[abstract]
 
         # Create context
         job_id = str(uuid.uuid4())
