@@ -8,10 +8,11 @@ Author: Malav Patel
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from agentds.agents.base import (
     AgentContext,
@@ -158,14 +159,14 @@ Best practices:
 
     def _deploy_docker_local(
         self, output_dir: Path, context: AgentContext
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Deploy using Docker locally."""
         import docker
 
         try:
             client = docker.from_env()
         except Exception as e:
-            raise RuntimeError(f"Docker daemon not available: {e}")
+            raise RuntimeError(f"Docker daemon not available: {e}") from e
 
         project_name = f"agentds-{context.job_id[:8]}"
         image_name = f"{project_name}:latest"
@@ -182,7 +183,7 @@ Best practices:
                 if "stream" in log:
                     logger.debug(log["stream"].strip())
         except Exception as e:
-            raise RuntimeError(f"Docker build failed: {e}")
+            raise RuntimeError(f"Docker build failed: {e}") from e
 
         # Run container
         logger.info("Starting container")
@@ -195,7 +196,7 @@ Best practices:
                 remove=False,
             )
         except Exception as e:
-            raise RuntimeError(f"Container start failed: {e}")
+            raise RuntimeError(f"Container start failed: {e}") from e
 
         # Wait for health check
         import time
@@ -205,14 +206,12 @@ Best practices:
             container.reload()
             if container.status == "running":
                 # Check if health endpoint responds
-                try:
+                with contextlib.suppress(Exception):
                     import httpx
 
                     response = httpx.get("http://localhost:8000/health", timeout=2)
                     if response.status_code == 200:
                         break
-                except Exception:
-                    pass
             time.sleep(1)
 
         return {
@@ -227,7 +226,7 @@ Best practices:
 
     def _deploy_aws_ecs(
         self, output_dir: Path, context: AgentContext
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Deploy to AWS ECS/Fargate."""
         # This is a simplified implementation
         # In production, use boto3 for full ECS deployment
@@ -255,7 +254,7 @@ Output the commands as a shell script."""
 
     def _deploy_gcp_cloud_run(
         self, output_dir: Path, context: AgentContext
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Deploy to GCP Cloud Run."""
         project_id = context.settings.llm.vertexai_project
         service_name = f"agentds-{context.job_id[:8]}"
@@ -303,7 +302,7 @@ gcloud run deploy {service_name} \\
 
     def _deploy_azure_container(
         self, output_dir: Path, context: AgentContext
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Deploy to Azure Container Instances."""
         return {
             "status": "instructions_generated",
@@ -320,7 +319,7 @@ To deploy to Azure Container Instances:
 
     def _deploy_kubernetes(
         self, output_dir: Path, context: AgentContext
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Deploy to Kubernetes cluster."""
         k8s_dir = output_dir / "k8s"
 
@@ -346,7 +345,7 @@ To deploy to Azure Container Instances:
         }
 
     def _generate_deployment_report(
-        self, deployment_info: Dict[str, Any], platform: DeploymentPlatform
+        self, deployment_info: dict[str, Any], platform: DeploymentPlatform
     ) -> str:
         """Generate deployment report as JSON."""
         import json
@@ -364,7 +363,7 @@ To deploy to Azure Container Instances:
         return json.dumps(report, indent=2)
 
     def _format_approval_message(
-        self, deployment_info: Dict[str, Any], platform: DeploymentPlatform
+        self, deployment_info: dict[str, Any], platform: DeploymentPlatform
     ) -> str:
         """Format approval message."""
         status = deployment_info.get("status", "unknown")
@@ -390,7 +389,7 @@ Next Steps:
 Do you want to proceed?
 """
 
-    def _format_dict(self, d: Dict[str, Any], indent: int = 2) -> str:
+    def _format_dict(self, d: dict[str, Any], indent: int = 2) -> str:
         """Format dictionary for display."""
         lines = []
         for key, value in d.items():

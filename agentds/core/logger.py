@@ -8,13 +8,14 @@ Author: Malav Patel
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import sys
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import structlog
 from structlog.types import Processor
@@ -22,8 +23,8 @@ from structlog.types import Processor
 from agentds.core.config import get_settings
 
 # Context variables for request tracking
-job_id_ctx: ContextVar[Optional[str]] = ContextVar("job_id", default=None)
-agent_ctx: ContextVar[Optional[str]] = ContextVar("agent", default=None)
+job_id_ctx: ContextVar[str | None] = ContextVar("job_id", default=None)
+agent_ctx: ContextVar[str | None] = ContextVar("agent", default=None)
 
 # Logfire instance (initialized lazily)
 _logfire_configured = False
@@ -39,42 +40,38 @@ def configure_logfire() -> None:
         import logfire
 
         settings = get_settings()
-        
+
         logfire.configure(
             service_name="agentds",
             environment=settings.environment,
             send_to_logfire=settings.environment != "test",
         )
-        
+
         # Instrument Pydantic-AI if available
-        try:
+        with contextlib.suppress(Exception):
             logfire.instrument_pydantic_ai()
-        except Exception:
-            pass  # Pydantic-AI not installed or not configured
-        
+
         # Instrument HTTPX for API calls
-        try:
+        with contextlib.suppress(Exception):
             logfire.instrument_httpx()
-        except Exception:
-            pass
-        
+
         _logfire_configured = True
-        
+
     except ImportError:
         pass  # Logfire not installed
 
 
 def add_timestamp(
-    logger: logging.Logger, method_name: str, event_dict: Dict[str, Any]
-) -> Dict[str, Any]:
+    logger: logging.Logger, method_name: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
     """Add ISO timestamp to log event."""
     event_dict["timestamp"] = datetime.now(timezone.utc).isoformat()
     return event_dict
 
 
 def add_context(
-    logger: logging.Logger, method_name: str, event_dict: Dict[str, Any]
-) -> Dict[str, Any]:
+    logger: logging.Logger, method_name: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
     """Add context variables to log event."""
     job_id = job_id_ctx.get()
     agent = agent_ctx.get()
@@ -86,8 +83,8 @@ def add_context(
 
 
 def add_app_info(
-    logger: logging.Logger, method_name: str, event_dict: Dict[str, Any]
-) -> Dict[str, Any]:
+    logger: logging.Logger, method_name: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
     """Add application info to log event."""
     settings = get_settings()
     event_dict["app"] = settings.app_name
@@ -97,9 +94,9 @@ def add_app_info(
 
 
 def setup_logging(
-    level: Optional[str] = None,
-    log_format: Optional[str] = None,
-    log_file: Optional[Path] = None,
+    level: str | None = None,
+    log_format: str | None = None,
+    log_file: Path | None = None,
     enable_logfire: bool = True,
 ) -> None:
     """
@@ -221,7 +218,7 @@ def log_llm_call(
     tokens: int,
     cost: float,
     latency_ms: float,
-    agent: Optional[str] = None,
+    agent: str | None = None,
 ) -> None:
     """
     Log an LLM call for observability.
@@ -260,8 +257,8 @@ class LogContext:
 
     def __init__(
         self,
-        job_id: Optional[str] = None,
-        agent: Optional[str] = None,
+        job_id: str | None = None,
+        agent: str | None = None,
     ) -> None:
         """
         Initialize log context.
@@ -272,8 +269,8 @@ class LogContext:
         """
         self.job_id = job_id
         self.agent = agent
-        self._job_token: Optional[Any] = None
-        self._agent_token: Optional[Any] = None
+        self._job_token: Any | None = None
+        self._agent_token: Any | None = None
 
     def __enter__(self) -> "LogContext":
         """Enter context and set variables."""
