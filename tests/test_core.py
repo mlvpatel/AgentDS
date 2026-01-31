@@ -22,7 +22,7 @@ class TestSettings:
         from agentds.core.config import Settings
 
         settings = Settings()
-        assert settings.app_name == "Personal Data Scientist"
+        assert settings.app_name == "AgentDS"
         assert settings.app_version == "1.0.0"
         assert settings.debug is False
 

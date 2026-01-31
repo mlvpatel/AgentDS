@@ -1,7 +1,7 @@
 """
-Personal Data Scientist Gradio Web Interface.
+AgentDS Gradio Web Interface.
 
-Interactive web UI for the Personal Data Scientist pipeline with human-in-the-loop controls.
+Interactive web UI for the AgentDS pipeline with human-in-the-loop controls.
 
 Author: Malav Patel
 """
@@ -438,7 +438,7 @@ def launch_app(
     setup_logging(level=settings.log_level, log_format=settings.log_format)
 
     logger.info(
-        "Launching Personal Data Scientist web interface",
+        "Launching AgentDS web interface",
         host=host,
         port=port,
     )
@@ -455,7 +455,7 @@ def launch_app(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Personal Data Scientist Web Interface")
+    parser = argparse.ArgumentParser(description="AgentDS Web Interface")
     parser.add_argument("--host", default="0.0.0.0", help="Server host")
     parser.add_argument("--port", type=int, default=7860, help="Server port")
     parser.add_argument("--share", action="store_true", help="Create public URL")

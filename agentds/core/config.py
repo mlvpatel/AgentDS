@@ -1,5 +1,5 @@
 """
-Personal Data Scientist Configuration Management.
+AgentDS Configuration Management.
 
 This module provides centralized configuration management using Pydantic Settings.
 Supports environment variables, .env files, and YAML configuration.
@@ -137,7 +137,7 @@ class Settings(BaseSettings):
     )
 
     # Application
-    app_name: str = Field(default="Personal Data Scientist")
+    app_name: str = Field(default="AgentDS")
     app_version: str = Field(default="1.0.0")
     debug: bool = Field(default=False, alias="DEBUG")
     environment: str = Field(default="development", alias="ENVIRONMENT")

@@ -1,5 +1,5 @@
 # =============================================================================
-# Personal Data Scientist - LLM Configuration
+# AgentDS - LLM Configuration
 # =============================================================================
 # This file configures LLM providers, model assignments, and fallback chains.
 # Author: Malav Patel

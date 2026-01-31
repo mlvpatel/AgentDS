@@ -1,5 +1,5 @@
 """
-Personal Data Scientist - Structured Logging with Logfire.
+AgentDS - Structured Logging with Logfire.
 
 Provides JSON-structured logging with context propagation and Logfire observability.
 

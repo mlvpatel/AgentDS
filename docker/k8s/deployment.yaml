@@ -124,7 +124,7 @@ spec:
       storage: 5Gi
 
 ---
-# Personal Data Scientist Web Deployment
+# AgentDS Web Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -197,7 +197,7 @@ spec:
         runAsUser: 1000
 
 ---
-# Personal Data Scientist Web Service
+# AgentDS Web Service
 apiVersion: v1
 kind: Service
 metadata:
@@ -212,7 +212,7 @@ spec:
   type: ClusterIP
 
 ---
-# Personal Data Scientist API Deployment
+# AgentDS API Deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -270,7 +270,7 @@ spec:
             periodSeconds: 10
 
 ---
-# Personal Data Scientist API Service
+# AgentDS API Service
 apiVersion: v1
 kind: Service
 metadata:

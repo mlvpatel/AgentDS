@@ -354,7 +354,7 @@ Add an Error Trigger node to catch failures:
 
 ### 1. Use Environment Variables
 
-Store Personal Data Scientist URL in n8n credentials:
+Store AgentDS URL in n8n credentials:
 ```
 AGENTDS_URL=http://agentds:8000/api
 ```
@@ -399,7 +399,7 @@ Split complex automations:
 Error: connect ECONNREFUSED
 ```
 
-**Solution**: Ensure Personal Data Scientist API is running and accessible from n8n network.
+**Solution**: Ensure AgentDS API is running and accessible from n8n network.
 
 ### Timeout Errors
 
@@ -415,7 +415,7 @@ Error: ESOCKETTIMEDOUT
 Error: Unexpected token
 ```
 
-**Solution**: Check Personal Data Scientist logs for errors. API may be returning HTML error page.
+**Solution**: Check AgentDS logs for errors. API may be returning HTML error page.
 
 ---
 

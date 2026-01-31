@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.0.0] - 2026-01-29
+## [1.0.0] - 2026-01-29
 
 ### Added
 
@@ -92,7 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Migration Guide
 
-### From v1.x to v2.0
+### Migration Notes
 
 1. **Update requirements:**
    ```bash
@@ -111,7 +111,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
    pipeline = Pipeline()
    pipeline.run(data="data.csv")
 
-   # New (v2.0)
+   # New (v1.0)
    from agentds import AgentDSPipeline, PipelineConfig
    config = PipelineConfig(phases=["build", "deploy"])
    pipeline = AgentDSPipeline(config=config)

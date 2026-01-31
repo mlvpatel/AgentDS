@@ -23,7 +23,7 @@ Last Updated: January 2026
 
 ## System Overview
 
-Personal Data Scientist is a multi-agent data science automation system that orchestrates 10 specialized agents across three phases:
+AgentDS is a multi-agent data science automation system that orchestrates 10 specialized agents across three phases:
 
 - **Build Phase**: Data loading, cleaning, EDA, feature engineering, model training
 - **Deploy Phase**: API generation, Docker configuration, cloud deployment
@@ -50,7 +50,7 @@ Personal Data Scientist is a multi-agent data science automation system that orc
 
 ```
 +===========================================================================+
-|                           Personal Data Scientist Architecture                        |
+|                              AgentDS Architecture                                    |
 +===========================================================================+
 
                               +-----------------+
@@ -620,6 +620,6 @@ Namespace: agentds
 
 ---
 
-*This document is maintained as part of Personal Data Scientist*
+*This document is maintained as part of AgentDS*
 
 *Author: Malav Patel | malav.patel203@gmail.com*

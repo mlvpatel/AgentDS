@@ -282,10 +282,10 @@ print(f"Final outputs: {result['state']['final_outputs']}")
 
 ### Core Classes
 
-#### Personal Data ScientistPipeline
+#### AgentDSPipeline
 
 ```python
-class Personal Data ScientistPipeline:
+class AgentDSPipeline:
     def __init__(
         self,
         config: Optional[PipelineConfig] = None,

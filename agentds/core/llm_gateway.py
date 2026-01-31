@@ -1,5 +1,5 @@
 """
-Personal Data Scientist - LLM Gateway.
+AgentDS - LLM Gateway.
 
 Universal gateway for 100+ LLM providers via LiteLLM with Logfire observability.
 

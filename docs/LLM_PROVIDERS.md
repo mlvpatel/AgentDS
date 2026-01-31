@@ -25,7 +25,7 @@ Last Updated: January 2026
 
 ## Overview
 
-Personal Data Scientist uses LiteLLM as a universal gateway to access 100+ LLM providers with a unified API. This allows seamless switching between providers and automatic fallback on failures.
+AgentDS uses LiteLLM as a universal gateway to access 100+ LLM providers with a unified API. This allows seamless switching between providers and automatic fallback on failures.
 
 ### Key Features
 
@@ -62,7 +62,7 @@ agent_llm_mapping:
     temperature: 0.0
 ```
 
-**Usage in Personal Data Scientist:**
+**Usage in AgentDS:**
 ```python
 from agentds.core.llm_gateway import LLMGateway
 
