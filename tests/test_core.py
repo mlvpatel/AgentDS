@@ -56,12 +56,13 @@ class TestSettings:
         """Test available providers detection."""
         from agentds.core.config import LLMSettings
 
-        llm = LLMSettings(openai_api_key="sk-test")
-        providers = llm.get_available_providers()
+        # Test with explicit API key parameter
+        llm_with_key = LLMSettings.model_validate({"openai_api_key": "sk-test"})
+        providers = llm_with_key.get_available_providers()
         assert "openai" in providers
 
-        # Test that ollama is always available
-        llm_empty = LLMSettings()
+        # Test that ollama is always available when no keys are set
+        llm_empty = LLMSettings.model_validate({})
         providers_empty = llm_empty.get_available_providers()
         assert "ollama" in providers_empty
 

@@ -118,6 +118,7 @@ class TestDataLoaderAgent:
             (".xlsx", "excel"),
         ],
     )
+    @pytest.mark.llm
     def test_format_detection(
         self,
         mock_settings: Settings,
