@@ -247,24 +247,26 @@ Edit `config/llm_config.yaml`:
 
 ```yaml
 # Default model for all agents
-default_model: openai/gpt-4o-mini
+default_model: openai/gpt-4.1-mini
 
 # Agent-specific assignments
 agent_llm_mapping:
   DataLoaderAgent:
-    model: groq/llama-3.1-8b-instant
+    model: groq/llama-4-scout
     temperature: 0.0
   AutoMLAgent:
-    model: openai/gpt-4o
+    model: openai/gpt-4.1
     temperature: 0.0
   # ... more agents
 
 # Fallback chain
 fallback_chains:
   default:
-    - openai/gpt-4o
-    - anthropic/claude-3-5-sonnet
-    - ollama/llama3.1:70b
+    - anthropic/claude-sonnet-4-20250514
+    - openai/gpt-4.1
+    - google/gemini-2.5-pro
+    - deepseek/deepseek-v3
+    - groq/llama-4-maverick
 ```
 
 ### Presets

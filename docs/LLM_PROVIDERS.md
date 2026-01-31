@@ -513,59 +513,60 @@ litellm_settings:
   num_retries: 3
   request_timeout: 120
 
-default_model: openai/gpt-4o-mini
+default_model: openai/gpt-4.1-mini
 
 agent_llm_mapping:
   # LOW complexity - fast, cheap
   DataLoaderAgent:
-    model: groq/llama-3.1-8b-instant
+    model: groq/llama-4-scout
     temperature: 0.0
     complexity: LOW
 
   DataCleaningAgent:
-    model: groq/llama-3.1-8b-instant
+    model: openai/gpt-4.1-mini
     temperature: 0.0
     complexity: LOW
 
   # MEDIUM complexity - balanced
   EDACopilotAgent:
-    model: openai/gpt-4o-mini
+    model: google/gemini-2.5-flash
     temperature: 0.1
     complexity: MEDIUM
 
   FeatureEngineerAgent:
-    model: anthropic/claude-3-5-sonnet-20241022
+    model: anthropic/claude-sonnet-4-20250514
     temperature: 0.0
     complexity: MEDIUM
 
   # HIGH complexity - best quality
   AutoMLAgent:
-    model: openai/gpt-4o
+    model: openai/gpt-4.1
     temperature: 0.0
     complexity: HIGH
 
   APIWrapperAgent:
-    model: anthropic/claude-3-5-sonnet-20241022
+    model: anthropic/claude-sonnet-4-20250514
     temperature: 0.0
     complexity: HIGH
 
   # CRITICAL - self-optimization
   OptimizationAgent:
-    model: openai/gpt-4o
+    model: anthropic/claude-sonnet-4-20250514
     temperature: 0.2
     complexity: CRITICAL
 
 fallback_chains:
   default:
-    - openai/gpt-4o
-    - anthropic/claude-3-5-sonnet-20241022
-    - vertex_ai/gemini-1.5-pro
-    - ollama/llama3.1:70b
+    - anthropic/claude-sonnet-4-20250514
+    - openai/gpt-4.1
+    - google/gemini-2.5-pro
+    - deepseek/deepseek-v3
+    - groq/llama-4-maverick
 
   low_complexity:
-    - groq/llama-3.1-8b-instant
-    - ollama/llama3.1:8b
-    - together_ai/meta-llama/Llama-3.1-8B-Instruct-Turbo
+    - groq/llama-4-scout
+    - openai/gpt-4.1-mini
+    - google/gemini-2.5-flash
 
 presets:
   budget:

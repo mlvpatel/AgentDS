@@ -19,8 +19,8 @@ AgentDS is an intelligent, multi-agent framework that automates the entire data 
 - **🤖 Multi-Agent Architecture**: Specialized agents for each phase of the data science lifecycle
 - **🧠 LLM-Powered Intelligence**: Leverages multiple LLM providers (OpenAI, Anthropic, Google, etc.)
 - **📊 Interactive Dashboard**: Beautiful Gradio web interface for monitoring and control
-- **🔌 Extensible Integrations**: n8n workflows, cloud storage, and custom APIs
-- **📈 MLOps Ready**: Built-in experiment tracking, model versioning, and deployment tools
+- **🔌 Extensible Integrations**: n8n workflows, webhooks, and custom APIs
+- **📈 MLOps Ready**: Deployment tooling (Docker/K8s) and MLflow-ready configuration hooks
 
 ### 🛠️ Agent Capabilities
 
@@ -42,8 +42,8 @@ AgentDS is an intelligent, multi-agent framework that automates the entire data 
 ### Prerequisites
 
 - Python 3.10 or higher
-- Redis (for caching and job queue)
-- At least one LLM API key (OpenAI, Anthropic, Google, etc.)
+- Redis (optional; enables caching and the Redis-backed job queue)
+- At least one LLM API key (OpenAI, Anthropic, Google, etc.) or a local provider (Ollama)
 
 ### Installation
 
@@ -73,31 +73,40 @@ cp .env.example .env
 
 ```bash
 # Run a complete ML pipeline
-agentds run --data data.csv --target target_column --task classification
+agentds run data.csv -t "Predict customer churn" -o ./outputs
 
-# Individual agent operations
-agentds clean --data data.csv --output cleaned_data.csv
-agentds eda --data data.csv --report eda_report.html
-agentds train --data data.csv --target target --model xgboost
+# Run a single agent
+agentds agent DataLoaderAgent data.csv -o ./outputs
+
+# Launch web UI and API
+agentds web
+agentds api
+
+# Check status and configuration
+agentds status
+agentds config
 ```
 
 #### Python API
 
 ```python
-from agentds.workflows.pipeline import DataSciencePipeline
+from agentds.workflows.pipeline import AgentDSPipeline, PipelineConfig, PipelinePhase
 
 # Initialize pipeline
-pipeline = DataSciencePipeline(
-    data_path="data.csv",
-    target_column="target",
-    task_type="classification"
+config = PipelineConfig(
+  phases=[PipelinePhase.BUILD, PipelinePhase.DEPLOY],
+  human_in_loop=False,
 )
+pipeline = AgentDSPipeline(config=config)
 
 # Run complete workflow
-results = await pipeline.run()
+results = pipeline.run(
+  data_source="data.csv",
+  task_description="Predict customer churn",
+  output_destination="./outputs",
+)
 
-print(f"Best Model: {results.best_model}")
-print(f"Accuracy: {results.metrics['accuracy']:.4f}")
+print(f"Job ID: {results['job_id']}")
 ```
 
 #### Web Interface
@@ -211,7 +220,7 @@ Configure your preferred LLM provider in `config/llm_config.yaml`:
 
 ```yaml
 default_provider: openai
-default_model: gpt-4-turbo-preview
+default_model: openai/gpt-4.1-mini
 
 providers:
   openai:
@@ -324,7 +333,7 @@ mypy agentds/
 - Follow PEP 8 guidelines
 - Use type hints for all functions
 - Write docstrings for public APIs
-- Maintain test coverage above 80%
+- Keep or improve test coverage; new features should include tests
 
 ---
 
