@@ -1,0 +1,403 @@
+# =============================================================================
+# Personal Data Scientist v2.0 Kubernetes Deployment
+# Complete stack for production deployment
+# Author: Malav Patel
+# =============================================================================
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: personal-data-scientist
+  labels:
+    app.kubernetes.io/name: personal-data-scientist
+    app.kubernetes.io/version: "2.0.0"
+
+---
+# ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: personal-data-scientist-config
+  namespace: personal-data-scientist
+data:
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  HUMAN_IN_LOOP: "true"
+  DEFAULT_TEMPERATURE: "0.0"
+
+---
+# Secret for API keys (create separately with actual values)
+# kubectl create secret generic personal-data-scientist-secrets -n personal-data-scientist \
+#   --from-literal=OPENAI_API_KEY=sk-... \
+#   --from-literal=ANTHROPIC_API_KEY=sk-ant-...
+apiVersion: v1
+kind: Secret
+metadata:
+  name: personal-data-scientist-secrets
+  namespace: personal-data-scientist
+type: Opaque
+stringData:
+  OPENAI_API_KEY: "replace-with-actual-key"
+  ANTHROPIC_API_KEY: "replace-with-actual-key"
+
+---
+# Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: personal-data-scientist
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          command:
+            - redis-server
+            - --appendonly
+            - "yes"
+            - --maxmemory
+            - "512mb"
+            - --maxmemory-policy
+            - allkeys-lru
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-pvc
+
+---
+# Redis Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: personal-data-scientist
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+  type: ClusterIP
+
+---
+# Redis PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: personal-data-scientist
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# Personal Data Scientist Web Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: personal-data-scientist-web
+  namespace: personal-data-scientist
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: personal-data-scientist-web
+  template:
+    metadata:
+      labels:
+        app: personal-data-scientist-web
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/mlvpatel/personal-data-scientist:latest
+          ports:
+            - containerPort: 7860
+          env:
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "7860"
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: personal-data-scientist-secrets
+                  key: OPENAI_API_KEY
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: personal-data-scientist-secrets
+                  key: ANTHROPIC_API_KEY
+          envFrom:
+            - configMapRef:
+                name: personal-data-scientist-config
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 7860
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7860
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: outputs
+              mountPath: /app/outputs
+      volumes:
+        - name: outputs
+          persistentVolumeClaim:
+            claimName: personal-data-scientist-outputs-pvc
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+
+---
+# Personal Data Scientist Web Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: personal-data-scientist-web
+  namespace: personal-data-scientist
+spec:
+  selector:
+    app: personal-data-scientist-web
+  ports:
+    - port: 80
+      targetPort: 7860
+  type: ClusterIP
+
+---
+# Personal Data Scientist API Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: personal-data-scientist-api
+  namespace: personal-data-scientist
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: personal-data-scientist-api
+  template:
+    metadata:
+      labels:
+        app: personal-data-scientist-api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/mlvpatel/personal-data-scientist:latest
+          command: ["python", "-m", "personal-data-scientist.web.api.webhooks"]
+          ports:
+            - containerPort: 8000
+          env:
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "8000"
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: personal-data-scientist-secrets
+                  key: OPENAI_API_KEY
+          envFrom:
+            - configMapRef:
+                name: personal-data-scientist-config
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "2Gi"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+---
+# Personal Data Scientist API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: personal-data-scientist-api
+  namespace: personal-data-scientist
+spec:
+  selector:
+    app: personal-data-scientist-api
+  ports:
+    - port: 80
+      targetPort: 8000
+  type: ClusterIP
+
+---
+# Outputs PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: personal-data-scientist-outputs-pvc
+  namespace: personal-data-scientist
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# HPA for Web
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: personal-data-scientist-web-hpa
+  namespace: personal-data-scientist
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: personal-data-scientist-web
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+---
+# HPA for API
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: personal-data-scientist-api-hpa
+  namespace: personal-data-scientist
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: personal-data-scientist-api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+---
+# Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: personal-data-scientist-ingress
+  namespace: personal-data-scientist
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+spec:
+  tls:
+    - hosts:
+        - personal-data-scientist.example.com
+      secretName: personal-data-scientist-tls
+  rules:
+    - host: personal-data-scientist.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: personal-data-scientist-api
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: personal-data-scientist-web
+                port:
+                  number: 80
+
+---
+# NetworkPolicy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: personal-data-scientist-network-policy
+  namespace: personal-data-scientist
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: personal-data-scientist
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+  egress:
+    - {}  # Allow all egress for API calls

@@ -1,0 +1,59 @@
+# =============================================================================
+# Personal Data Scientist Kubernetes Service Configuration
+# Author: Malav Patel
+# =============================================================================
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: personal-data-scientist-web
+  namespace: personal-data-scientist
+  labels:
+    app: personal-data-scientist
+    component: web
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 7860
+      protocol: TCP
+  selector:
+    app: personal-data-scientist-web
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: personal-data-scientist-api
+  namespace: personal-data-scientist
+  labels:
+    app: personal-data-scientist
+    component: api
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP
+  selector:
+    app: personal-data-scientist-api
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: personal-data-scientist
+  labels:
+    app: redis
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: 6379
+  selector:
+    app: redis

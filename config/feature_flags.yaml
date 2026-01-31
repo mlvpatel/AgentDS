@@ -1,0 +1,239 @@
+# =============================================================================
+# AgentDS v2.0 - Feature Flags
+# =============================================================================
+# Toggle features on/off without code changes.
+# Author: Malav Patel
+# Updated: January 29, 2026
+# =============================================================================
+
+# =============================================================================
+# CORE FEATURES
+# =============================================================================
+features:
+  # Human-in-the-loop controls
+  human_in_loop:
+    enabled: true
+    description: "Enable human approval at each agent step"
+    
+  # Agent Lightning APO self-optimization
+  agent_lightning_apo:
+    enabled: true
+    description: "Enable automatic prompt optimization"
+    
+  # Redis caching
+  redis_cache:
+    enabled: true
+    description: "Enable Redis-based caching"
+    fallback: memory  # Use memory cache if Redis unavailable
+    
+  # Redis Queue for job management
+  redis_queue:
+    enabled: true
+    description: "Enable distributed job queue"
+    
+  # MLflow experiment tracking
+  mlflow_tracking:
+    enabled: true
+    description: "Track experiments in MLflow"
+    
+  # Pre-flight connection validation
+  preflight_check:
+    enabled: true
+    description: "Validate all connections before pipeline start"
+    
+  # Checkpoint and rollback
+  checkpointing:
+    enabled: true
+    description: "Save state after each agent for rollback"
+    
+  # Diff view for data comparison
+  diff_view:
+    enabled: true
+    description: "Show data differences before/after cleaning"
+    
+  # ETA display
+  eta_display:
+    enabled: true
+    description: "Show estimated time remaining"
+    
+  # Server-sent events for real-time updates
+  sse_updates:
+    enabled: true
+    description: "Real-time progress updates via SSE"
+
+# =============================================================================
+# AGENT FEATURES
+# =============================================================================
+agent_features:
+  # DataLoaderAgent
+  data_loader:
+    streaming_load:
+      enabled: true
+      description: "Stream large files instead of loading all at once"
+    schema_inference:
+      enabled: true
+      description: "Automatically infer data schema"
+      
+  # DataCleaningAgent
+  data_cleaning:
+    auto_type_conversion:
+      enabled: true
+      description: "Automatically convert data types"
+    smart_imputation:
+      enabled: true
+      description: "Use ML-based imputation for missing values"
+      
+  # EDACopilotAgent
+  eda_copilot:
+    interactive_charts:
+      enabled: true
+      description: "Generate interactive Plotly charts"
+    auto_insights:
+      enabled: true
+      description: "Generate AI-powered insights"
+      
+  # FeatureEngineerAgent
+  feature_engineer:
+    auto_feature_selection:
+      enabled: true
+      description: "Automatically select important features"
+    feature_interaction:
+      enabled: false
+      description: "Create feature interactions (experimental)"
+      
+  # AutoMLAgent
+  automl:
+    ensemble_models:
+      enabled: true
+      description: "Create ensemble of top models"
+    neural_network:
+      enabled: false
+      description: "Include neural networks in search (experimental)"
+    explainability:
+      enabled: true
+      description: "Generate SHAP explanations"
+      
+  # APIWrapperAgent
+  api_wrapper:
+    async_endpoints:
+      enabled: true
+      description: "Generate async API endpoints"
+    batch_inference:
+      enabled: true
+      description: "Include batch prediction endpoint"
+    api_versioning:
+      enabled: true
+      description: "Include API versioning support"
+      
+  # DevOpsAgent
+  devops:
+    multi_stage_docker:
+      enabled: true
+      description: "Generate multi-stage Dockerfile"
+    kubernetes_configs:
+      enabled: true
+      description: "Generate Kubernetes manifests"
+    github_actions:
+      enabled: true
+      description: "Generate GitHub Actions workflow"
+      
+  # CloudDeployAgent
+  cloud_deploy:
+    auto_scaling:
+      enabled: false
+      description: "Configure auto-scaling (requires cloud setup)"
+    ssl_termination:
+      enabled: false
+      description: "Configure SSL/TLS (requires domain)"
+      
+  # DriftMonitorAgent
+  drift_monitor:
+    real_time_monitoring:
+      enabled: false
+      description: "Real-time drift detection (requires streaming setup)"
+    alert_notifications:
+      enabled: true
+      description: "Send alerts on drift detection"
+      
+  # OptimizationAgent
+  optimization:
+    continuous_learning:
+      enabled: false
+      description: "Continuous model retraining (experimental)"
+    a_b_testing:
+      enabled: false
+      description: "A/B testing for prompts (experimental)"
+
+# =============================================================================
+# INTEGRATION FEATURES
+# =============================================================================
+integration_features:
+  # n8n webhook integration
+  n8n_webhooks:
+    enabled: true
+    description: "Enable n8n webhook endpoints"
+    
+  # Slack notifications
+  slack_notifications:
+    enabled: false
+    description: "Send notifications to Slack"
+    
+  # Email notifications
+  email_notifications:
+    enabled: false
+    description: "Send email notifications"
+    
+  # Discord notifications
+  discord_notifications:
+    enabled: false
+    description: "Send notifications to Discord"
+
+# =============================================================================
+# EXPERIMENTAL FEATURES
+# =============================================================================
+experimental:
+  # Multi-agent collaboration
+  multi_agent_collab:
+    enabled: false
+    description: "Allow agents to collaborate on tasks"
+    warning: "Experimental - may produce unexpected results"
+    
+  # Natural language pipeline definition
+  nl_pipeline_definition:
+    enabled: false
+    description: "Define pipeline steps in natural language"
+    warning: "Experimental - limited validation"
+    
+  # Auto-retry with different LLM
+  auto_llm_fallback:
+    enabled: true
+    description: "Automatically try different LLM on failure"
+    
+  # Streaming inference
+  streaming_inference:
+    enabled: false
+    description: "Stream LLM responses for real-time output"
+    warning: "May increase latency for short responses"
+
+# =============================================================================
+# ENVIRONMENT-SPECIFIC OVERRIDES
+# =============================================================================
+environments:
+  development:
+    human_in_loop: true
+    redis_cache: false
+    mlflow_tracking: false
+    preflight_check: false
+    
+  staging:
+    human_in_loop: true
+    redis_cache: true
+    mlflow_tracking: true
+    preflight_check: true
+    
+  production:
+    human_in_loop: true
+    redis_cache: true
+    mlflow_tracking: true
+    preflight_check: true
+    auto_llm_fallback: true

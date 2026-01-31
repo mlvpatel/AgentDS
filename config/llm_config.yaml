@@ -1,0 +1,291 @@
+# =============================================================================
+# Personal Data Scientist - LLM Configuration
+# =============================================================================
+# This file configures LLM providers, model assignments, and fallback chains.
+# Author: Malav Patel
+# Updated: January 2026
+# =============================================================================
+
+# =============================================================================
+# LITELLM SETTINGS
+# =============================================================================
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  num_retries: 3
+  request_timeout: 120
+  fallback_to_default: true
+  caching: true
+  cache_type: redis  # redis, memory, or disk
+
+# =============================================================================
+# DEFAULT MODEL (Used when no specific model assigned)
+# =============================================================================
+default_model: openai/gpt-4.1-mini
+
+# =============================================================================
+# AGENT-SPECIFIC LLM ASSIGNMENTS
+# =============================================================================
+# Each agent can use a different LLM based on task complexity.
+# Complexity levels: LOW, MEDIUM, HIGH, CRITICAL
+
+agent_llm_mapping:
+  # Phase 1: Build (Execution Squad)
+  DataLoaderAgent:
+    model: groq/llama-4-scout
+    temperature: 0.0
+    complexity: LOW
+    description: "Simple data loading tasks"
+
+  DataCleaningAgent:
+    model: openai/gpt-4.1-mini
+    temperature: 0.0
+    complexity: LOW
+    description: "Data cleaning and validation"
+
+  EDACopilotAgent:
+    model: google/gemini-2.5-flash
+    temperature: 0.1  # Slight creativity for insights
+    complexity: MEDIUM
+    description: "Exploratory data analysis"
+
+  FeatureEngineerAgent:
+    model: anthropic/claude-sonnet-4-20250514
+    temperature: 0.0
+    complexity: MEDIUM
+    description: "Feature engineering and preprocessing"
+
+  AutoMLAgent:
+    model: openai/gpt-4.1
+    temperature: 0.0
+    complexity: HIGH
+    description: "Model selection and hyperparameter tuning"
+
+  # Phase 2: Deploy (MLOps Squad)
+  APIWrapperAgent:
+    model: anthropic/claude-sonnet-4-20250514
+    temperature: 0.0
+    complexity: HIGH
+    description: "API code generation"
+
+  DevOpsAgent:
+    model: openai/gpt-4.1-mini
+    temperature: 0.0
+    complexity: MEDIUM
+    description: "Docker and infrastructure configuration"
+
+  CloudDeployAgent:
+    model: openai/gpt-4.1-mini
+    temperature: 0.0
+    complexity: MEDIUM
+    description: "Cloud deployment automation"
+
+  # Phase 3: Learn (Optimization Squad)
+  DriftMonitorAgent:
+    model: groq/llama-4-scout
+    temperature: 0.0
+    complexity: LOW
+    description: "Model drift monitoring"
+
+  OptimizationAgent:
+    model: anthropic/claude-sonnet-4-20250514
+    temperature: 0.2  # Creative for prompt rewriting
+    complexity: CRITICAL
+    description: "APO-based self-optimization"
+
+# =============================================================================
+# FALLBACK CHAINS
+# =============================================================================
+# When primary model fails, try fallbacks in order.
+
+fallback_chains:
+  default:
+    - anthropic/claude-sonnet-4-20250514
+    - openai/gpt-4.1
+    - google/gemini-2.5-pro
+    - deepseek/deepseek-v3
+    - groq/llama-4-maverick
+
+  high_complexity:
+    - anthropic/claude-sonnet-4-20250514
+    - openai/gpt-4.1
+    - google/gemini-2.5-pro
+
+  low_complexity:
+    - groq/llama-4-scout
+    - openai/gpt-4.1-mini
+    - google/gemini-2.5-flash
+
+  code_generation:
+    - anthropic/claude-sonnet-4-20250514
+    - openai/gpt-4.1
+    - deepseek/deepseek-v3
+
+# =============================================================================
+# PROVIDER CONFIGURATIONS
+# =============================================================================
+providers:
+  openai:
+    env_var: OPENAI_API_KEY
+    base_url: null
+    organization: null
+    models:
+      - gpt-4.1
+      - gpt-4.1-mini
+      - gpt-4.1-nano
+      - gpt-4o
+      - gpt-4o-mini
+      - o1
+      - o1-mini
+      - o1-pro
+      - o3-mini
+
+  anthropic:
+    env_var: ANTHROPIC_API_KEY
+    base_url: null
+    models:
+      - claude-sonnet-4-20250514
+      - claude-opus-4-20250514
+      - claude-haiku-4-20250514
+      - claude-3-5-sonnet-20241022
+      - claude-3-5-haiku-20241022
+
+  google:
+    project: ${VERTEXAI_PROJECT}
+    location: ${VERTEXAI_LOCATION}
+    models:
+      - gemini-2.5-pro
+      - gemini-2.5-flash
+      - gemini-2.0-flash
+      - gemini-1.5-pro
+      - gemini-1.5-flash
+
+  aws_bedrock:
+    access_key: ${AWS_ACCESS_KEY_ID}
+    secret_key: ${AWS_SECRET_ACCESS_KEY}
+    region: ${AWS_REGION_NAME}
+    models:
+      - anthropic.claude-sonnet-4-20250514-v1:0
+      - anthropic.claude-3-5-sonnet-20241022-v2:0
+      - meta.llama4-70b-instruct-v1:0
+
+  azure:
+    api_key: ${AZURE_API_KEY}
+    api_base: ${AZURE_API_BASE}
+    api_version: ${AZURE_API_VERSION}
+    models:
+      - gpt-4.1
+      - gpt-4o
+      - gpt-4-turbo
+
+  groq:
+    env_var: GROQ_API_KEY
+    models:
+      - llama-4-maverick
+      - llama-4-scout
+      - llama-3.3-70b-versatile
+      - mixtral-8x7b-32768
+
+  mistral:
+    env_var: MISTRAL_API_KEY
+    models:
+      - mistral-large-latest
+      - mistral-medium-latest
+      - codestral-latest
+      - mistral-small-latest
+
+  together:
+    env_var: TOGETHERAI_API_KEY
+    models:
+      - meta-llama/Llama-4-70B-Instruct-Turbo
+      - meta-llama/Llama-4-8B-Instruct-Turbo
+      - deepseek-ai/DeepSeek-V3
+
+  deepseek:
+    env_var: DEEPSEEK_API_KEY
+    models:
+      - deepseek-v3
+      - deepseek-chat
+      - deepseek-coder
+
+  xai:
+    env_var: XAI_API_KEY
+    models:
+      - grok-2
+      - grok-2-mini
+
+  ollama:
+    base_url: ${OLLAMA_API_BASE:-http://localhost:11434}
+    models:
+      - llama4:70b
+      - llama4:8b
+      - llama3.3:70b
+      - qwen2.5:72b
+      - deepseek-v3:70b
+      - mistral:7b
+
+# =============================================================================
+# EMBEDDING MODELS
+# =============================================================================
+embeddings:
+  default: openai/text-embedding-3-small
+  models:
+    - openai/text-embedding-3-large
+    - openai/text-embedding-3-small
+    - cohere/embed-english-v3.0
+    - voyage/voyage-large-2
+
+# =============================================================================
+# COST TRACKING
+# =============================================================================
+cost_tracking:
+  enabled: true
+  budget_alert_threshold: 10.0  # USD
+  budget_hard_limit: 50.0  # USD
+  reset_period: daily  # daily, weekly, monthly
+
+# =============================================================================
+# RATE LIMITING
+# =============================================================================
+rate_limiting:
+  enabled: true
+  requests_per_minute: 60
+  tokens_per_minute: 100000
+  concurrent_requests: 10
+
+# =============================================================================
+# MODEL PRESETS
+# =============================================================================
+presets:
+  budget:
+    description: "Lowest cost configuration"
+    default_model: groq/llama-4-scout
+    agent_overrides:
+      AutoMLAgent: openai/gpt-4.1-mini
+      APIWrapperAgent: openai/gpt-4.1-mini
+      OptimizationAgent: openai/gpt-4.1-mini
+
+  balanced:
+    description: "Balance of cost and quality"
+    default_model: openai/gpt-4.1-mini
+    agent_overrides:
+      AutoMLAgent: openai/gpt-4.1
+      APIWrapperAgent: anthropic/claude-sonnet-4-20250514
+      OptimizationAgent: openai/gpt-4.1
+
+  quality:
+    description: "Highest quality configuration"
+    default_model: anthropic/claude-sonnet-4-20250514
+    agent_overrides:
+      FeatureEngineerAgent: anthropic/claude-sonnet-4-20250514
+      AutoMLAgent: openai/gpt-4.1
+      APIWrapperAgent: anthropic/claude-sonnet-4-20250514
+      OptimizationAgent: anthropic/claude-sonnet-4-20250514
+
+  local:
+    description: "Local inference only (no API costs)"
+    default_model: ollama/llama4:8b
+    agent_overrides:
+      AutoMLAgent: ollama/llama4:70b
+      APIWrapperAgent: ollama/qwen2.5:72b
+      OptimizationAgent: ollama/llama4:70b

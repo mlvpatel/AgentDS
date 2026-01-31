@@ -1,0 +1,343 @@
+# =============================================================================
+# AgentDS v2.0 - Pipeline Configuration
+# =============================================================================
+# This file configures pipeline behavior, agent settings, and data handling.
+# Author: Malav Patel
+# Updated: January 29, 2026
+# =============================================================================
+
+# =============================================================================
+# GENERAL SETTINGS
+# =============================================================================
+pipeline:
+  name: "AgentDS Pipeline"
+  version: "2.0.0"
+  description: "Autonomous Data Science Pipeline"
+  
+  # Execution mode: sequential, parallel (where possible)
+  execution_mode: sequential
+  
+  # Maximum concurrent agents (if parallel mode)
+  max_concurrent_agents: 3
+  
+  # Session management
+  session:
+    persist: true
+    storage: redis  # redis, file, memory
+    ttl_hours: 24
+    
+  # Checkpointing
+  checkpoint:
+    enabled: true
+    storage: file  # file, redis, s3
+    path: ./checkpoints
+    max_checkpoints: 10
+
+# =============================================================================
+# HUMAN-IN-THE-LOOP SETTINGS
+# =============================================================================
+human_in_loop:
+  enabled: true
+  
+  # Timeout for user response (seconds, 0 = infinite)
+  timeout: 0
+  
+  # Default action if timeout reached
+  default_action: pause  # approve, pause, reject
+  
+  # Actions available to user
+  available_actions:
+    - APPROVE_AND_CONTINUE
+    - RERUN
+    - RERUN_WITH_FEEDBACK
+    - SKIP
+    - STOP_PIPELINE
+    - DOWNLOAD_OUTPUT
+    - ROLLBACK
+    
+  # Auto-approve settings
+  auto_approve:
+    enabled: false
+    risk_levels:
+      - LOW  # Only auto-approve LOW risk actions
+    agents:
+      - DataLoaderAgent
+      - DriftMonitorAgent
+
+# =============================================================================
+# PHASE CONFIGURATIONS
+# =============================================================================
+phases:
+  build:
+    name: "Build Phase"
+    description: "Data processing and model training"
+    agents:
+      - DataLoaderAgent
+      - DataCleaningAgent
+      - EDACopilotAgent
+      - FeatureEngineerAgent
+      - AutoMLAgent
+    required: true
+    
+  deploy:
+    name: "Deploy Phase"
+    description: "API generation and deployment"
+    agents:
+      - APIWrapperAgent
+      - DevOpsAgent
+      - CloudDeployAgent
+    required: false
+    
+  learn:
+    name: "Learn Phase"
+    description: "Monitoring and optimization"
+    agents:
+      - DriftMonitorAgent
+      - OptimizationAgent
+    required: false
+    schedule: "0 0 * * *"  # Daily at midnight (cron format)
+
+# =============================================================================
+# AGENT CONFIGURATIONS
+# =============================================================================
+agents:
+  DataLoaderAgent:
+    enabled: true
+    timeout: 300
+    retries: 3
+    supported_formats:
+      - csv
+      - parquet
+      - json
+      - excel
+      - feather
+      - orc
+    supported_sources:
+      - file
+      - s3
+      - gcs
+      - azure_blob
+      - postgresql
+      - mysql
+      - mongodb
+      - snowflake
+      - http_api
+      
+  DataCleaningAgent:
+    enabled: true
+    timeout: 600
+    retries: 2
+    operations:
+      - remove_duplicates
+      - handle_missing
+      - fix_data_types
+      - remove_outliers
+      - validate_schema
+    quality_threshold: 0.8
+    
+  EDACopilotAgent:
+    enabled: true
+    timeout: 900
+    retries: 2
+    analysis_types:
+      - univariate
+      - bivariate
+      - correlation
+      - distribution
+      - missing_patterns
+    visualization_format: html
+    
+  FeatureEngineerAgent:
+    enabled: true
+    timeout: 1200
+    retries: 2
+    operations:
+      - encoding
+      - scaling
+      - imputation
+      - feature_selection
+      - feature_creation
+    output_format: pkl
+    
+  AutoMLAgent:
+    enabled: true
+    timeout: 3600
+    retries: 1
+    frameworks:
+      - xgboost
+      - lightgbm
+      - sklearn
+    optimization:
+      trials: 50
+      metric: auto  # auto-detected based on task
+      direction: maximize
+    cross_validation:
+      enabled: true
+      folds: 5
+      
+  APIWrapperAgent:
+    enabled: true
+    timeout: 600
+    retries: 2
+    framework: litestar  # litestar, fastapi
+    features:
+      - health_check
+      - prediction_endpoint
+      - batch_endpoint
+      - documentation
+      
+  DevOpsAgent:
+    enabled: true
+    timeout: 600
+    retries: 2
+    outputs:
+      - Dockerfile
+      - docker-compose.yml
+      - requirements.txt
+      - .dockerignore
+      
+  CloudDeployAgent:
+    enabled: true
+    timeout: 1800
+    retries: 2
+    platforms:
+      - docker_local
+      - aws_ecs
+      - gcp_cloud_run
+      - azure_container
+      - kubernetes
+      
+  DriftMonitorAgent:
+    enabled: true
+    timeout: 300
+    retries: 3
+    metrics:
+      - data_drift
+      - prediction_drift
+      - feature_drift
+    threshold: 0.3
+    schedule: "*/6 * * * *"  # Every 6 hours
+    
+  OptimizationAgent:
+    enabled: true
+    timeout: 1800
+    retries: 1
+    algorithm: APO  # Agent Lightning APO
+    settings:
+      rounds: 5
+      beam_width: 3
+      gradient_model: gpt-4o
+      apply_edit_model: gpt-4o-mini
+
+# =============================================================================
+# DATA SETTINGS
+# =============================================================================
+data:
+  # Maximum file size (MB)
+  max_file_size: 500
+  
+  # Row sampling for large datasets
+  sampling:
+    enabled: true
+    threshold_rows: 1000000
+    sample_size: 100000
+    method: random  # random, stratified, systematic
+    
+  # Data validation
+  validation:
+    enabled: true
+    schema_inference: true
+    null_threshold: 0.5  # Max 50% nulls per column
+    
+  # Temporary storage
+  temp_storage:
+    path: ./temp
+    cleanup_on_success: true
+    cleanup_on_failure: false
+
+# =============================================================================
+# OUTPUT SETTINGS
+# =============================================================================
+output:
+  # Default output directory
+  default_path: ./outputs
+  
+  # Artifact naming
+  naming:
+    include_timestamp: true
+    include_job_id: true
+    format: "{job_id}_{artifact}_{timestamp}"
+    
+  # Supported destinations
+  destinations:
+    - local
+    - s3
+    - gcs
+    - azure_blob
+    - postgresql
+    - mysql
+    
+  # Report generation
+  reports:
+    enabled: true
+    formats:
+      - html
+      - json
+      - pdf
+    include_visualizations: true
+
+# =============================================================================
+# LOGGING SETTINGS
+# =============================================================================
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR
+  format: json  # json, text
+  
+  # File logging
+  file:
+    enabled: true
+    path: ./logs
+    rotation: daily
+    retention_days: 30
+    
+  # Structured logging fields
+  fields:
+    - timestamp
+    - level
+    - agent
+    - job_id
+    - message
+    - duration
+    
+  # External integrations
+  integrations:
+    mlflow:
+      enabled: true
+      tracking_uri: ${MLFLOW_TRACKING_URI:-http://localhost:5000}
+      experiment_name: agentds
+      
+    sentry:
+      enabled: false
+      dsn: ${SENTRY_DSN}
+
+# =============================================================================
+# PERFORMANCE SETTINGS
+# =============================================================================
+performance:
+  # Memory management
+  memory:
+    max_usage_percent: 80
+    gc_threshold: 0.7
+    
+  # Caching
+  cache:
+    enabled: true
+    backend: redis
+    ttl_seconds: 3600
+    max_size_mb: 1000
+    
+  # Parallel processing
+  parallel:
+    enabled: true
+    max_workers: 4
+    chunk_size: 10000

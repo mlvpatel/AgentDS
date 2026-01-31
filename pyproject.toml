@@ -1,0 +1,166 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "personal-data-scientist"
+version = "2.0.0"
+description = "Personal Data Scientist - Autonomous Data Science Pipeline with Multi-Agent Orchestration"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Malav Patel", email = "malav.patel203@gmail.com" }
+]
+keywords = [
+    "data-science",
+    "machine-learning",
+    "ai-agents",
+    "llm",
+    "automl",
+    "mlops",
+    "automation",
+    "pydantic-ai",
+    "langgraph",
+    "llama-index"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    # Core Data
+    "polars[all]>=1.37.0",
+    "duckdb>=1.4.0",
+    "connectorx>=0.4.0",
+    "smart-open[all]>=7.0.0",
+    "pyarrow>=15.0.0",
+    # Machine Learning
+    "scikit-learn>=1.4.0",
+    "xgboost>=2.1.0",
+    "optuna>=4.7.0",
+    # LLM & Agents
+    "litellm>=1.82.0",
+    "langgraph>=1.0.10",
+    "pydantic-ai>=0.1.0",
+    "llama-index>=0.12.0",
+    # Observability
+    "logfire>=2.0.0",
+    "mlflow>=2.20.0",
+    # API & Web
+    "litestar>=2.14.0",
+    "gradio>=5.49.0",
+    "uvicorn[standard]>=0.34.0",
+    "httpx>=0.28.0",
+    # Infrastructure
+    "redis>=5.2.0",
+    # Utilities
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.2.0",
+    "pyyaml>=6.0.0",
+    "python-dotenv>=1.0.0",
+    "tenacity>=9.0.0",
+    "rich>=13.9.0",
+    "structlog>=24.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+    "types-redis>=4.6.0",
+    "types-pyyaml>=6.0.0",
+    "pre-commit>=3.6.0",
+]
+all = [
+    "lightgbm>=4.3.0",
+    "cleanlab>=2.7.0",
+    "evidently>=0.5.0",
+    "feature-engine>=1.8.0",
+    "docker>=7.0.0",
+    "boto3>=1.34.0",
+    "google-cloud-storage>=2.14.0",
+    "azure-storage-blob>=12.19.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/mlvpatel/personal-data-scientist"
+Documentation = "https://github.com/mlvpatel/personal-data-scientist#readme"
+Repository = "https://github.com/mlvpatel/personal-data-scientist.git"
+Issues = "https://github.com/mlvpatel/personal-data-scientist/issues"
+
+[project.scripts]
+pds = "agentds.cli:main"
+personal-data-scientist = "agentds.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agentds"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "C901",   # too complex
+    "ARG001", # unused function argument
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["ARG001", "S101"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "llm: marks tests that require LLM connection",
+]
+
+[tool.coverage.run]
+source = ["agentds"]
+omit = ["tests/*", "*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
