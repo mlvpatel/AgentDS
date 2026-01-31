@@ -224,12 +224,12 @@ default_model: openai/gpt-4.1-mini
 
 providers:
   openai:
-    model: gpt-4-turbo-preview
+    model: gpt-4.1-mini
     temperature: 0.1
     max_tokens: 4096
   
   anthropic:
-    model: claude-3-5-sonnet-20241022
+    model: claude-sonnet-4-20250514
     temperature: 0.1
     max_tokens: 8192
 ```
