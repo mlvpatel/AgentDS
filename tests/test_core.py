@@ -22,7 +22,7 @@ class TestSettings:
         from agentds.core.config import Settings
 
         settings = Settings()
-        assert settings.app_name == "AgentDS"
+        assert settings.app_name == "Personal Data Scientist"
         assert settings.app_version == "1.0.0"
         assert settings.debug is False
 
@@ -59,7 +59,11 @@ class TestSettings:
         llm = LLMSettings(openai_api_key="sk-test")
         providers = llm.get_available_providers()
         assert "openai" in providers
-        assert "ollama" in providers  # Always available
+
+        # Test that ollama is always available
+        llm_empty = LLMSettings()
+        providers_empty = llm_empty.get_available_providers()
+        assert "ollama" in providers_empty
 
 
 # =============================================================================
