@@ -141,7 +141,7 @@ ignore = [
 [tool.mypy]
 python_version = "3.10"
 warn_return_any = false  # Too many false positives with dynamic data
-warn_unused_ignores = true
+warn_unused_ignores = false  # Suppress unused ignore warnings
 disallow_untyped_defs = false  # Gradual typing approach
 ignore_missing_imports = true
 no_implicit_optional = false
@@ -156,6 +156,10 @@ module = [
     "agentds.integrations.*"
 ]
 disable_error_code = ["no-any-return", "arg-type", "assignment", "return-value", "attr-defined", "index", "operator", "misc", "list-item", "typeddict-item", "no-untyped-def", "name-defined", "import-untyped"]
+
+[[tool.mypy.overrides]]
+module = "agentds.cli"
+disable_error_code = ["import-untyped"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

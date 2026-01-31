@@ -231,7 +231,7 @@ def status(ctx: click.Context) -> None:
 @click.pass_context
 def config(ctx: click.Context) -> None:
     """Display current configuration."""
-    import yaml  # type: ignore[import-untyped]
+    import yaml
 
     settings = get_settings()
 
