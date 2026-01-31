@@ -148,7 +148,7 @@ async def health_check() -> HealthResponse:
 
     return HealthResponse(
         status="healthy" if all(components.values()) else "degraded",
-        version="2.0.0",
+        version="1.0.0",
         timestamp=datetime.now(timezone.utc).isoformat(),
         components=components,
     )
@@ -488,7 +488,7 @@ def create_api() -> Litestar:
         ),
         openapi_config=OpenAPIConfig(
             title="AgentDS API",
-            version="2.0.0",
+            version="1.0.0",
             description="REST API for AgentDS multi-agent data science pipeline",
         ),
     )

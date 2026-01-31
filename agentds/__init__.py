@@ -12,7 +12,6 @@ This package provides a complete data science automation system with:
 Author: Malav Patel
 Email: malav.patel203@gmail.com
 License: MIT
-Version: 2.0.0
 """
 
 from importlib.metadata import version, PackageNotFoundError
@@ -20,7 +19,7 @@ from importlib.metadata import version, PackageNotFoundError
 try:
     __version__ = version("agentds")
 except PackageNotFoundError:
-    __version__ = "2.0.0"
+    __version__ = "1.0.0"
 
 __author__ = "Malav Patel"
 __email__ = "malav.patel203@gmail.com"

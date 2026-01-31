@@ -1,5 +1,5 @@
 # =============================================================================
-# AgentDS v2.0 - Pipeline Configuration
+# AgentDS - Pipeline Configuration
 # =============================================================================
 # This file configures pipeline behavior, agent settings, and data handling.
 # Author: Malav Patel
@@ -11,7 +11,7 @@
 # =============================================================================
 pipeline:
   name: "AgentDS Pipeline"
-  version: "2.0.0"
+  version: "1.0.0"
   description: "Autonomous Data Science Pipeline"
   
   # Execution mode: sequential, parallel (where possible)

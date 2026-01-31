@@ -1,5 +1,5 @@
 # =============================================================================
-# Personal Data Scientist v2.0 Kubernetes Deployment
+# AgentDS Kubernetes Deployment
 # Complete stack for production deployment
 # Author: Malav Patel
 # =============================================================================
@@ -9,18 +9,18 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: personal-data-scientist
+  name: agentds
   labels:
-    app.kubernetes.io/name: personal-data-scientist
-    app.kubernetes.io/version: "2.0.0"
+    app.kubernetes.io/name: agentds
+    app.kubernetes.io/version: "1.0.0"
 
 ---
 # ConfigMap for application configuration
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: personal-data-scientist-config
-  namespace: personal-data-scientist
+  name: agentds-config
+  namespace: agentds
 data:
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
@@ -29,14 +29,14 @@ data:
 
 ---
 # Secret for API keys (create separately with actual values)
-# kubectl create secret generic personal-data-scientist-secrets -n personal-data-scientist \
+# kubectl create secret generic agentds-secrets -n agentds \
 #   --from-literal=OPENAI_API_KEY=sk-... \
 #   --from-literal=ANTHROPIC_API_KEY=sk-ant-...
 apiVersion: v1
 kind: Secret
 metadata:
-  name: personal-data-scientist-secrets
-  namespace: personal-data-scientist
+  name: agentds-secrets
+  namespace: agentds
 type: Opaque
 stringData:
   OPENAI_API_KEY: "replace-with-actual-key"
@@ -48,7 +48,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis
-  namespace: personal-data-scientist
+  namespace: agentds
 spec:
   replicas: 1
   selector:
@@ -100,7 +100,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis
-  namespace: personal-data-scientist
+  namespace: agentds
 spec:
   selector:
     app: redis
@@ -115,7 +115,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: redis-pvc
-  namespace: personal-data-scientist
+  namespace: agentds
 spec:
   accessModes:
     - ReadWriteOnce
@@ -128,21 +128,21 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: personal-data-scientist-web
-  namespace: personal-data-scientist
+  name: agentds-web
+  namespace: agentds
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: personal-data-scientist-web
+      app: agentds-web
   template:
     metadata:
       labels:
-        app: personal-data-scientist-web
+        app: agentds-web
     spec:
       containers:
         - name: web
-          image: ghcr.io/mlvpatel/personal-data-scientist:latest
+          image: ghcr.io/mlvpatel/agentds:latest
           ports:
             - containerPort: 7860
           env:
@@ -155,16 +155,16 @@ spec:
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: personal-data-scientist-secrets
+                  name: agentds-secrets
                   key: OPENAI_API_KEY
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: personal-data-scientist-secrets
+                  name: agentds-secrets
                   key: ANTHROPIC_API_KEY
           envFrom:
             - configMapRef:
-                name: personal-data-scientist-config
+                name: agentds-config
           resources:
             requests:
               cpu: "500m"
@@ -191,7 +191,7 @@ spec:
       volumes:
         - name: outputs
           persistentVolumeClaim:
-            claimName: personal-data-scientist-outputs-pvc
+            claimName: agentds-outputs-pvc
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -201,11 +201,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: personal-data-scientist-web
-  namespace: personal-data-scientist
+  name: agentds-web
+  namespace: agentds
 spec:
   selector:
-    app: personal-data-scientist-web
+    app: agentds-web
   ports:
     - port: 80
       targetPort: 7860
@@ -216,22 +216,22 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: personal-data-scientist-api
-  namespace: personal-data-scientist
+  name: agentds-api
+  namespace: agentds
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: personal-data-scientist-api
+      app: agentds-api
   template:
     metadata:
       labels:
-        app: personal-data-scientist-api
+        app: agentds-api
     spec:
       containers:
         - name: api
-          image: ghcr.io/mlvpatel/personal-data-scientist:latest
-          command: ["python", "-m", "personal-data-scientist.web.api.webhooks"]
+          image: ghcr.io/mlvpatel/agentds:latest
+          command: ["python", "-m", "agentds.web.api.webhooks"]
           ports:
             - containerPort: 8000
           env:
@@ -244,11 +244,11 @@ spec:
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: personal-data-scientist-secrets
+                  name: agentds-secrets
                   key: OPENAI_API_KEY
           envFrom:
             - configMapRef:
-                name: personal-data-scientist-config
+                name: agentds-config
           resources:
             requests:
               cpu: "250m"
@@ -274,11 +274,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: personal-data-scientist-api
-  namespace: personal-data-scientist
+  name: agentds-api
+  namespace: agentds
 spec:
   selector:
-    app: personal-data-scientist-api
+    app: agentds-api
   ports:
     - port: 80
       targetPort: 8000
@@ -289,8 +289,8 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: personal-data-scientist-outputs-pvc
-  namespace: personal-data-scientist
+  name: agentds-outputs-pvc
+  namespace: agentds
 spec:
   accessModes:
     - ReadWriteMany
@@ -303,13 +303,13 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: personal-data-scientist-web-hpa
-  namespace: personal-data-scientist
+  name: agentds-web-hpa
+  namespace: agentds
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: personal-data-scientist-web
+    name: agentds-web
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -325,13 +325,13 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: personal-data-scientist-api-hpa
-  namespace: personal-data-scientist
+  name: agentds-api-hpa
+  namespace: agentds
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: personal-data-scientist-api
+    name: agentds-api
   minReplicas: 2
   maxReplicas: 10
   metrics:
@@ -347,8 +347,8 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: personal-data-scientist-ingress
-  namespace: personal-data-scientist
+  name: agentds-ingress
+  namespace: agentds
   annotations:
     kubernetes.io/ingress.class: nginx
     cert-manager.io/cluster-issuer: letsencrypt-prod
@@ -357,24 +357,24 @@ metadata:
 spec:
   tls:
     - hosts:
-        - personal-data-scientist.example.com
-      secretName: personal-data-scientist-tls
+        - agentds.example.com
+      secretName: agentds-tls
   rules:
-    - host: personal-data-scientist.example.com
+    - host: agentds.example.com
       http:
         paths:
           - path: /api
             pathType: Prefix
             backend:
               service:
-                name: personal-data-scientist-api
+                name: agentds-api
                 port:
                   number: 80
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: personal-data-scientist-web
+                name: agentds-web
                 port:
                   number: 80
 
@@ -383,8 +383,8 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: personal-data-scientist-network-policy
-  namespace: personal-data-scientist
+  name: agentds-network-policy
+  namespace: agentds
 spec:
   podSelector: {}
   policyTypes:
@@ -394,7 +394,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: personal-data-scientist
+              kubernetes.io/metadata.name: agentds
     - from:
         - namespaceSelector:
             matchLabels:

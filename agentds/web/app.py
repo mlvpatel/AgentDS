@@ -62,7 +62,7 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
     """
 
     with gr.Blocks(
-        title="Personal Data Scientist v2.0",
+        title="AgentDS",
         theme=gr.themes.Soft(),
         css=custom_css,
     ) as app:
@@ -73,7 +73,7 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
         # Header
         gr.Markdown(
             """
-            # Personal Data Scientist v2.0
+            # AgentDS
             ### Autonomous Data Science Pipeline with Multi-Agent Orchestration
 
             Upload your data, describe your task, and let AI handle the rest.

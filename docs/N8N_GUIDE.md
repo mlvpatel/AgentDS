@@ -3,7 +3,7 @@
 **Automate ML Pipelines with n8n Workflows**
 
 Author: Malav Patel  
-Version: 2.0.0
+
 
 ---
 
@@ -422,7 +422,7 @@ Error: Unexpected token
 ## Support
 
 For issues with n8n integration:
-- GitHub Issues: https://github.com/mlvpatel/agentds-v2/issues
+- GitHub Issues: https://github.com/mlvpatel/AgentDS/issues
 - Email: malav.patel203@gmail.com
 
 ---

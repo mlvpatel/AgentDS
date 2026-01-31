@@ -3,7 +3,7 @@
 **Complete Reference for 100+ LLM Providers via LiteLLM**
 
 Author: Malav Patel  
-Version: 2.0.0  
+  
 Last Updated: January 2026
 
 ---

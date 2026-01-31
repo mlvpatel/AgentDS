@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "personal-data-scientist"
-version = "2.0.0"
-description = "Personal Data Scientist - Autonomous Data Science Pipeline with Multi-Agent Orchestration"
+name = "agentds"
+version = "1.0.0"
+description = "AgentDS - Autonomous Data Science Pipeline with Multi-Agent Orchestration"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -50,9 +50,9 @@ dependencies = [
     "optuna>=4.7.0",
     # LLM & Agents
     "litellm>=1.82.0",
-    "langgraph>=1.0.10",
-    "pydantic-ai>=0.1.0",
-    "llama-index>=0.12.0",
+    "langgraph>=0.1.0",
+    "pydantic-ai>=0.0.3",
+    "llama-index>=0.10.0",
     # Observability
     "logfire>=2.0.0",
     "mlflow>=2.20.0",
@@ -96,14 +96,13 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mlvpatel/personal-data-scientist"
-Documentation = "https://github.com/mlvpatel/personal-data-scientist#readme"
-Repository = "https://github.com/mlvpatel/personal-data-scientist.git"
-Issues = "https://github.com/mlvpatel/personal-data-scientist/issues"
+Homepage = "https://github.com/mlvpatel/AgentDS"
+Documentation = "https://github.com/mlvpatel/AgentDS#readme"
+Repository = "https://github.com/mlvpatel/AgentDS.git"
+Issues = "https://github.com/mlvpatel/AgentDS/issues"
 
 [project.scripts]
-pds = "agentds.cli:main"
-personal-data-scientist = "agentds.cli:main"
+agentds = "agentds.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agentds"]

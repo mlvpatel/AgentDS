@@ -29,7 +29,7 @@ class TestSettings:
 
         settings = Settings()
         assert settings.app_name == "AgentDS"
-        assert settings.app_version == "2.0.0"
+        assert settings.app_version == "1.0.0"
         assert settings.debug is False
 
     def test_environment_override(self):

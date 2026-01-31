@@ -3,7 +3,7 @@
 **Production Deployment for All Platforms**
 
 Author: Malav Patel  
-Version: 2.0.0
+
 
 ---
 
@@ -26,8 +26,8 @@ Version: 2.0.0
 
 ```bash
 # Clone and setup
-git clone https://github.com/mlvpatel/agentds-v2.git
-cd agentds-v2
+git clone https://github.com/mlvpatel/AgentDS.git
+cd AgentDS
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt

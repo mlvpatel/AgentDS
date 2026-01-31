@@ -3,7 +3,7 @@
 **Common Issues and Solutions**
 
 Author: Malav Patel  
-Version: 2.0.0
+
 
 ---
 
@@ -504,7 +504,7 @@ ls -la outputs/550e8400-e29b-41d4-a716-*/
    ```
 
 3. **Search issues:**
-   https://github.com/mlvpatel/agentds-v2/issues
+   https://github.com/mlvpatel/AgentDS/issues
 
 4. **Contact:**
    - Email: malav.patel203@gmail.com

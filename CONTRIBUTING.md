@@ -35,12 +35,12 @@ This project follows a standard code of conduct. Please be respectful and inclus
 1. Fork the repository on GitHub
 2. Clone your fork:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/agentds-v2.git
-   cd agentds-v2
+   git clone https://github.com/YOUR_USERNAME/AgentDS.git
+   cd AgentDS
    ```
 3. Add upstream remote:
    ```bash
-   git remote add upstream https://github.com/mlvpatel/agentds-v2.git
+   git remote add upstream https://github.com/mlvpatel/AgentDS.git
    ```
 
 ---

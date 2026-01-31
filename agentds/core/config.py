@@ -138,7 +138,7 @@ class Settings(BaseSettings):
 
     # Application
     app_name: str = Field(default="Personal Data Scientist")
-    app_version: str = Field(default="2.0.0")
+    app_version: str = Field(default="1.0.0")
     debug: bool = Field(default=False, alias="DEBUG")
     environment: str = Field(default="development", alias="ENVIRONMENT")
 

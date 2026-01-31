@@ -6,10 +6,10 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: personal-data-scientist-web
-  namespace: personal-data-scientist
+  name: agentds-web
+  namespace: agentds
   labels:
-    app: personal-data-scientist
+    app: agentds
     component: web
 spec:
   type: ClusterIP
@@ -19,17 +19,17 @@ spec:
       targetPort: 7860
       protocol: TCP
   selector:
-    app: personal-data-scientist-web
+    app: agentds-web
 
 ---
 
 apiVersion: v1
 kind: Service
 metadata:
-  name: personal-data-scientist-api
-  namespace: personal-data-scientist
+  name: agentds-api
+  namespace: agentds
   labels:
-    app: personal-data-scientist
+    app: agentds
     component: api
 spec:
   type: ClusterIP
@@ -39,7 +39,7 @@ spec:
       targetPort: 8000
       protocol: TCP
   selector:
-    app: personal-data-scientist-api
+    app: agentds-api
 
 ---
 
@@ -47,7 +47,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis
-  namespace: personal-data-scientist
+  namespace: agentds
   labels:
     app: redis
 spec:

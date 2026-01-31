@@ -3,7 +3,7 @@
 **Complete Guide to Using AgentDS**
 
 Author: Malav Patel  
-Version: 2.0.0
+
 
 ---
 
@@ -510,7 +510,7 @@ redis-cli ping
 1. Check the logs: `agentds` logs tab or `logs/` directory
 2. Run diagnostics: `agentds status`
 3. Check documentation: `docs/` folder
-4. Open an issue: https://github.com/mlvpatel/agentds-v2/issues
+4. Open an issue: https://github.com/mlvpatel/AgentDS/issues
 
 ---
 

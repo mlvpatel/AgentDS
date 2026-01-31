@@ -3,7 +3,7 @@
 **Complete REST API and Python API Documentation**
 
 Author: Malav Patel  
-Version: 2.0.0
+
 
 ---
 
@@ -30,7 +30,7 @@ GET /api/health
 ```json
 {
   "status": "healthy",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "timestamp": "2026-01-29T12:00:00Z",
   "components": {
     "api": true,

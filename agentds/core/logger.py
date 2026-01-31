@@ -41,7 +41,7 @@ def configure_logfire() -> None:
         settings = get_settings()
         
         logfire.configure(
-            service_name="personal-data-scientist",
+            service_name="agentds",
             environment=settings.environment,
             send_to_logfire=settings.environment != "test",
         )

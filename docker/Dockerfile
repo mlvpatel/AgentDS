@@ -1,5 +1,5 @@
 # =============================================================================
-# Personal Data Scientist v2.0 Dockerfile
+# AgentDS Dockerfile
 # Multi-stage build for production deployment
 # Author: Malav Patel
 # =============================================================================
@@ -30,7 +30,7 @@ FROM python:3.11-slim as runtime
 
 # Labels
 LABEL maintainer="Malav Patel <malav.patel203@gmail.com>"
-LABEL version="2.0.0"
+LABEL version="1.0.0"
 LABEL description="AgentDS - Autonomous Data Science Pipeline"
 
 # Create non-root user

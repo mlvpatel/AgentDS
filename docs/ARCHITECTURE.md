@@ -3,7 +3,7 @@
 **Comprehensive Technical Documentation**
 
 Author: Malav Patel  
-Version: 2.0.0  
+  
 Last Updated: January 2026
 
 ---
@@ -39,7 +39,7 @@ Personal Data Scientist is a multi-agent data science automation system that orc
 | Web Interface | Gradio | 5.49.1 |
 | REST API | Litestar | 2.14.x |
 | Caching | Redis | 5.2.x |
-| Job Queue | Redis Queue (RQ) | 2.0.0 |
+| Job Queue | Redis Queue (RQ) | Latest |
 | APO | Agent Lightning | 0.2.x |
 
 ---
