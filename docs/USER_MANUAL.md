@@ -361,7 +361,7 @@ Choose a preset based on your needs:
 - Outputs: `drift_report.json`
 
 #### OptimizationAgent
-- Agent Lightning APO
+- APO (Automatic Prompt Optimization)
 - Prompt analysis and critique
 - Automatic prompt rewriting
 - Performance tracking

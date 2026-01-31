@@ -7,7 +7,7 @@ This package provides a complete data science automation system with:
 - Human-in-the-loop controls at every step
 - Pydantic-AI for structured LLM outputs
 - Logfire for full observability
-- Agent Lightning APO for self-optimization
+- APO (Automatic Prompt Optimization) for self-improvement
 
 Author: Malav Patel
 Email: malav.patel203@gmail.com

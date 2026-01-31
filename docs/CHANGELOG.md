@@ -27,10 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Cost tracking and budget alerts
   - Response caching
 
-- **Agent Lightning APO**
+- **APO (Automatic Prompt Optimization)**
   - Automatic Prompt Optimization
   - Self-improving agent prompts
   - Performance-based prompt evolution
+  - Optional Microsoft Agent Lightning integration
 
 - **Human-in-the-Loop Controls**
   - Approval at every agent step

@@ -1,7 +1,8 @@
 """
 AgentDS OptimizationAgent.
 
-Self-improves agent prompts using Agent Lightning APO (Automatic Prompt Optimization).
+Self-improves agent prompts using APO (Automatic Prompt Optimization) methodology.
+Based on the Evaluate-Critique-Rewrite cycle for iterative prompt improvement.
 
 Author: Malav Patel
 """
@@ -59,7 +60,7 @@ class PromptTemplate:
 
 class OptimizationAgent(BaseAgent):
     """
-    Agent for self-optimization using Agent Lightning APO.
+    Agent for self-optimization using APO methodology.
 
     APO (Automatic Prompt Optimization) cycle:
     1. EVALUATE: Run agent with current prompt, calculate reward
@@ -418,7 +419,7 @@ Output only the improved prompt, no explanations."""
         return {
             "report_type": "prompt_optimization",
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "methodology": "Agent Lightning APO",
+            "methodology": "APO (Automatic Prompt Optimization)",
             "summary": {
                 "agents_optimized": len(optimization_results),
                 "total_estimated_improvement": sum(
@@ -458,7 +459,7 @@ Output only the improved prompt, no explanations."""
 Prompt Optimization Complete
 ============================
 
-Methodology: Agent Lightning APO
+Methodology: APO (Automatic Prompt Optimization)
 Agents Optimized: {len(optimization_results)}
 
 Optimization Results:
@@ -493,8 +494,8 @@ def run_apo_optimization(
     """
     Run full APO optimization cycle.
 
-    This is a simplified implementation of the Agent Lightning APO algorithm.
-    In production, use the agentlightning package directly.
+    This is a custom implementation of the APO algorithm
+    (Evaluate-Critique-Rewrite cycle for prompt optimization).
 
     Args:
         agent_rollout: Function that runs agent and returns reward

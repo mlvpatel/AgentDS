@@ -40,7 +40,7 @@ AgentDS is a multi-agent data science automation system that orchestrates 10 spe
 | REST API | Litestar | 2.14.x |
 | Caching | Redis | 5.2.x |
 | Job Queue | Redis Queue (RQ) | Latest |
-| APO | Agent Lightning | 0.2.x |
+| APO | Custom + Agent Lightning (optional) | 1.0.0 / 0.2.x |
 
 ---
 
@@ -90,7 +90,7 @@ AgentDS is a multi-agent data science automation system that orchestrates 10 spe
 +-----------------+          +-----------------+          +-------------------+
 | DataLoaderAgent |          | APIWrapperAgent |          | DriftMonitorAgent |
 | DataCleanAgent  |          | DevOpsAgent     |          | OptimizationAgent |
-| EDACopilotAgent |          | CloudDeployAgent|          | (Agent Lightning) |
+| EDACopilotAgent |          | CloudDeployAgent|          | (APO Optimizer)   |
 | FeatureEngAgent |          +-----------------+          +-------------------+
 | AutoMLAgent     |
 +-----------------+

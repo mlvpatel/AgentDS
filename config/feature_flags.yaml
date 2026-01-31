@@ -15,7 +15,7 @@ features:
     enabled: true
     description: "Enable human approval at each agent step"
     
-  # Agent Lightning APO self-optimization
+  # APO (Automatic Prompt Optimization) self-improvement
   agent_lightning_apo:
     enabled: true
     description: "Enable automatic prompt optimization"

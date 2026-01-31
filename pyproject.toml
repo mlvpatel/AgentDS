@@ -74,6 +74,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+apo = [
+    # Microsoft Agent Lightning for advanced APO
+    "agentlightning>=0.2.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",

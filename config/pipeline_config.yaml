@@ -222,7 +222,7 @@ agents:
     enabled: true
     timeout: 1800
     retries: 1
-    algorithm: APO  # Agent Lightning APO
+    algorithm: APO  # Automatic Prompt Optimization
     settings:
       rounds: 5
       beam_width: 3
