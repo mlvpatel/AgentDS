@@ -24,6 +24,7 @@ class LLMSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LLM_",
         extra="ignore",
+        populate_by_name=True,
     )
 
     # API Keys

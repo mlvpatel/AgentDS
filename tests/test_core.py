@@ -62,7 +62,7 @@ class TestSettings:
         assert "openai" in providers
 
         # Test that ollama is always available when no keys are set
-        llm_empty = LLMSettings.model_validate({})
+        llm_empty = LLMSettings()
         providers_empty = llm_empty.get_available_providers()
         assert "ollama" in providers_empty
 
