@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -28,7 +28,7 @@ class Notification:
     message: str
     level: str = "info"  # info, warning, error, success
     timestamp: str = ""
-    metadata: Dict[str, Any] = None
+    metadata: dict[str, Any] = None
 
     def __post_init__(self) -> None:
         """Set defaults after init."""
@@ -80,7 +80,7 @@ class NotificationService(ABC):
         )
 
     async def send_drift_alert(
-        self, job_id: str, drift_score: float, features: List[str]
+        self, job_id: str, drift_score: float, features: list[str]
     ) -> bool:
         """Send drift detection alert."""
         return await self.send(
@@ -103,7 +103,7 @@ class SlackNotifier(NotificationService):
         "success": "#2ecc71",
     }
 
-    def __init__(self, webhook_url: str, channel: Optional[str] = None) -> None:
+    def __init__(self, webhook_url: str, channel: str | None = None) -> None:
         """
         Initialize Slack notifier.
 
@@ -169,7 +169,7 @@ class EmailNotifier(NotificationService):
         username: str,
         password: str,
         from_email: str,
-        to_emails: List[str],
+        to_emails: list[str],
         use_tls: bool = True,
     ) -> None:
         """
@@ -244,7 +244,7 @@ class EmailNotifier(NotificationService):
 class CompositeNotifier(NotificationService):
     """Sends notifications to multiple services."""
 
-    def __init__(self, notifiers: List[NotificationService]) -> None:
+    def __init__(self, notifiers: list[NotificationService]) -> None:
         """
         Initialize composite notifier.
 

@@ -14,7 +14,7 @@ Email: malav.patel203@gmail.com
 License: MIT
 """
 
-from importlib.metadata import version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError, version
 
 try:
     __version__ = version("agentds")
@@ -26,12 +26,11 @@ __email__ = "malav.patel203@gmail.com"
 __license__ = "MIT"
 
 # Core exports
+# Agent exports
+from agentds.agents.base import AgentResult, AgentStatus, BaseAgent
 from agentds.core.config import Settings, get_settings
 from agentds.core.llm_gateway import LLMGateway
-from agentds.core.logger import get_logger, setup_logging, configure_logfire
-
-# Agent exports
-from agentds.agents.base import BaseAgent, AgentResult, AgentStatus
+from agentds.core.logger import configure_logfire, get_logger, setup_logging
 
 # Workflow exports
 from agentds.workflows.pipeline import AgentDSPipeline

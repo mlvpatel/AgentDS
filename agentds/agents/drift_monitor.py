@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import polars as pl
 
@@ -175,7 +175,7 @@ Output analysis in JSON format with:
 
     def _calculate_drift(
         self, reference_df: pl.DataFrame, current_df: pl.DataFrame
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Calculate drift metrics between reference and current data."""
         results = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -271,11 +271,11 @@ Output analysis in JSON format with:
         # Convert to dictionaries
         ref_dict = dict(zip(
             ref_counts.get_column(ref_col.name).to_list(),
-            ref_counts.get_column("count").to_list()
+            ref_counts.get_column("count").to_list(), strict=False
         ))
         cur_dict = dict(zip(
             cur_counts.get_column(cur_col.name).to_list(),
-            cur_counts.get_column("count").to_list()
+            cur_counts.get_column("count").to_list(), strict=False
         ))
 
         # Get all categories
@@ -307,7 +307,7 @@ Output analysis in JSON format with:
             return "HIGH"
 
     def _analyze_drift(
-        self, drift_results: Dict[str, Any], context: AgentContext
+        self, drift_results: dict[str, Any], context: AgentContext
     ) -> str:
         """Use LLM to analyze drift and provide insights."""
         prompt = f"""Analyze this drift monitoring report and provide actionable insights:
@@ -331,7 +331,7 @@ Provide:
         response = self.call_llm(prompt)
         return response.content
 
-    def _generate_alerts(self, drift_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _generate_alerts(self, drift_results: dict[str, Any]) -> list[dict[str, Any]]:
         """Generate alerts based on drift results."""
         alerts = []
 
@@ -359,10 +359,10 @@ Provide:
 
     def _create_drift_report(
         self,
-        drift_results: Dict[str, Any],
+        drift_results: dict[str, Any],
         insights: str,
-        alerts: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        alerts: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Create comprehensive drift report."""
         return {
             "report_type": "drift_monitoring",
@@ -390,7 +390,7 @@ Provide:
         }
 
     def _format_approval_message(
-        self, drift_results: Dict[str, Any], alerts: List[Dict[str, Any]]
+        self, drift_results: dict[str, Any], alerts: list[dict[str, Any]]
     ) -> str:
         """Format approval message."""
         alert_summary = "\n".join(

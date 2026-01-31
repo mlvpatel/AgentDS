@@ -8,11 +8,10 @@ Author: Malav Patel
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -40,9 +39,9 @@ class WebhookPayload:
     event: WebhookEvent
     job_id: str
     timestamp: str
-    data: Dict[str, Any]
+    data: dict[str, Any]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "event": self.event.value,
@@ -68,7 +67,7 @@ class N8nClient:
     def __init__(
         self,
         webhook_url: str,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         timeout: int = 30,
     ) -> None:
         """
@@ -88,7 +87,7 @@ class N8nClient:
         self,
         event: WebhookEvent,
         job_id: str,
-        data: Optional[Dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
     ) -> bool:
         """
         Send webhook event to n8n.
@@ -140,7 +139,7 @@ class N8nClient:
         self,
         job_id: str,
         task_description: str,
-        phases: List[str],
+        phases: list[str],
     ) -> bool:
         """Send pipeline started event."""
         return await self.send_event(
@@ -157,7 +156,7 @@ class N8nClient:
         job_id: str,
         agent_name: str,
         status: str,
-        outputs: Dict[str, Any],
+        outputs: dict[str, Any],
     ) -> bool:
         """Send agent completed event."""
         return await self.send_event(
@@ -189,7 +188,7 @@ class N8nClient:
     async def send_pipeline_completed(
         self,
         job_id: str,
-        outputs: Dict[str, Any],
+        outputs: dict[str, Any],
         duration_seconds: float,
     ) -> bool:
         """Send pipeline completed event."""
@@ -206,7 +205,7 @@ class N8nClient:
         self,
         job_id: str,
         error: str,
-        agent_name: Optional[str] = None,
+        agent_name: str | None = None,
     ) -> bool:
         """Send pipeline failed event."""
         return await self.send_event(
@@ -222,7 +221,7 @@ class N8nClient:
         self,
         job_id: str,
         drift_score: float,
-        alerts: List[Dict[str, Any]],
+        alerts: list[dict[str, Any]],
     ) -> bool:
         """Send drift detected event."""
         return await self.send_event(
@@ -238,7 +237,7 @@ class N8nClient:
         """Close the HTTP client."""
         await self._client.aclose()
 
-    async def __aenter__(self) -> "N8nClient":
+    async def __aenter__(self) -> N8nClient:
         """Async context manager entry."""
         return self
 
@@ -256,13 +255,13 @@ class N8nWebhook:
 
     def __init__(self) -> None:
         """Initialize webhook receiver."""
-        self._handlers: Dict[str, Any] = {}
+        self._handlers: dict[str, Any] = {}
 
     def register_handler(self, action: str, handler: Any) -> None:
         """Register a handler for an action."""
         self._handlers[action] = handler
 
-    async def process_webhook(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def process_webhook(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
         Process incoming webhook from n8n.
 

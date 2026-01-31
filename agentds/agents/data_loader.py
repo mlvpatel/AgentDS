@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import polars as pl
 
@@ -137,8 +137,8 @@ Output your analysis in JSON format with:
         return result
 
     def _analyze_source(
-        self, data_source: Union[str, Path], context: AgentContext
-    ) -> Dict[str, Any]:
+        self, data_source: str | Path, context: AgentContext
+    ) -> dict[str, Any]:
         """Analyze the data source to determine loading strategy."""
         source_str = str(data_source)
 
@@ -204,7 +204,7 @@ Provide your analysis in JSON format."""
         return analysis
 
     def _load_data(
-        self, data_source: Union[str, Path], analysis: Dict[str, Any]
+        self, data_source: str | Path, analysis: dict[str, Any]
     ) -> pl.DataFrame:
         """Load data based on analysis."""
         source_str = str(data_source)
@@ -238,7 +238,7 @@ Provide your analysis in JSON format."""
             raise ValueError(f"Unsupported source type: {source_type}")
 
     def _load_file(
-        self, path: Path, fmt: str, analysis: Dict[str, Any]
+        self, path: Path, fmt: str, analysis: dict[str, Any]
     ) -> pl.DataFrame:
         """Load data from local file."""
         if not path.exists():
@@ -273,11 +273,11 @@ Provide your analysis in JSON format."""
             except Exception:
                 try:
                     return pl.read_parquet(path)
-                except Exception:
-                    raise ValueError(f"Unable to load file: {path}")
+                except Exception as e:
+                    raise ValueError(f"Unable to load file: {path}") from e
 
     def _load_cloud(
-        self, uri: str, fmt: str, analysis: Dict[str, Any]
+        self, uri: str, fmt: str, analysis: dict[str, Any]
     ) -> pl.DataFrame:
         """Load data from cloud storage."""
         from smart_open import open as smart_open_file
@@ -299,7 +299,7 @@ Provide your analysis in JSON format."""
             return pl.read_csv(io.BytesIO(content))
 
     def _load_database(
-        self, connection_string: str, analysis: Dict[str, Any]
+        self, connection_string: str, analysis: dict[str, Any]
     ) -> pl.DataFrame:
         """Load data from database."""
         import connectorx as cx
@@ -307,7 +307,7 @@ Provide your analysis in JSON format."""
         query = analysis.get("query", "SELECT * FROM data LIMIT 100000")
         return pl.from_pandas(cx.read_sql(connection_string, query))
 
-    def _load_api(self, url: str, analysis: Dict[str, Any]) -> pl.DataFrame:
+    def _load_api(self, url: str, analysis: dict[str, Any]) -> pl.DataFrame:
         """Load data from REST API."""
         import httpx
 
@@ -328,7 +328,7 @@ Provide your analysis in JSON format."""
         else:
             raise ValueError("Unable to parse API response as tabular data")
 
-    def _get_data_stats(self, df: pl.DataFrame) -> Dict[str, Any]:
+    def _get_data_stats(self, df: pl.DataFrame) -> dict[str, Any]:
         """Get statistics about the loaded data."""
         stats = {
             "row_count": df.height,
@@ -353,7 +353,7 @@ Provide your analysis in JSON format."""
         return stats
 
     def _format_approval_message(
-        self, stats: Dict[str, Any], analysis: Dict[str, Any]
+        self, stats: dict[str, Any], analysis: dict[str, Any]
     ) -> str:
         """Format approval message for human review."""
         cols_info = "\n".join(

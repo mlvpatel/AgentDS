@@ -14,14 +14,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel, Field
 
 from agentds.core.artifact_store import ArtifactStore, ArtifactType
 from agentds.core.config import Settings, get_settings
 from agentds.core.llm_gateway import LLMGateway, LLMResponse
-from agentds.core.logger import LogContext, get_logger, get_logfire_span
+from agentds.core.logger import LogContext, get_logfire_span, get_logger
 
 logger = get_logger(__name__)
 
@@ -59,12 +59,12 @@ class AgentResult(BaseModel):
 
     # Timing
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    completed_at: Optional[datetime] = None
+    completed_at: datetime | None = None
     duration_seconds: float = Field(default=0.0)
 
     # Outputs
-    outputs: Dict[str, Any] = Field(default_factory=dict)
-    artifacts: List[str] = Field(default_factory=list)
+    outputs: dict[str, Any] = Field(default_factory=dict)
+    artifacts: list[str] = Field(default_factory=list)
 
     # Metadata
     llm_calls: int = Field(default=0)
@@ -72,13 +72,13 @@ class AgentResult(BaseModel):
     tokens_used: int = Field(default=0)
 
     # Error handling
-    error: Optional[str] = None
-    error_details: Optional[Dict[str, Any]] = None
+    error: str | None = None
+    error_details: dict[str, Any] | None = None
 
     # Human-in-the-loop
     requires_approval: bool = Field(default=True)
-    approval_message: Optional[str] = None
-    user_feedback: Optional[str] = None
+    approval_message: str | None = None
+    user_feedback: str | None = None
 
     def mark_completed(self) -> None:
         """Mark result as completed."""
@@ -87,7 +87,7 @@ class AgentResult(BaseModel):
         if self.started_at:
             self.duration_seconds = (self.completed_at - self.started_at).total_seconds()
 
-    def mark_failed(self, error: str, details: Optional[Dict[str, Any]] = None) -> None:
+    def mark_failed(self, error: str, details: dict[str, Any] | None = None) -> None:
         """Mark result as failed."""
         self.status = AgentStatus.FAILED
         self.error = error
@@ -105,10 +105,10 @@ class AgentContext:
     settings: Settings
     llm_gateway: LLMGateway
     artifact_store: ArtifactStore
-    previous_results: Dict[str, AgentResult] = field(default_factory=dict)
-    user_feedback: Optional[str] = None
-    task_description: Optional[str] = None
-    extra: Dict[str, Any] = field(default_factory=dict)
+    previous_results: dict[str, AgentResult] = field(default_factory=dict)
+    user_feedback: str | None = None
+    task_description: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseAgent(ABC):
@@ -128,14 +128,14 @@ class BaseAgent(ABC):
     description: str = "Base agent class"
     phase: str = "unknown"
     complexity: str = "MEDIUM"  # LOW, MEDIUM, HIGH, CRITICAL
-    input_types: List[str] = []
-    output_types: List[str] = []
+    input_types: list[str] = []
+    output_types: list[str] = []
 
     def __init__(
         self,
-        settings: Optional[Settings] = None,
-        llm_gateway: Optional[LLMGateway] = None,
-        artifact_store: Optional[ArtifactStore] = None,
+        settings: Settings | None = None,
+        llm_gateway: LLMGateway | None = None,
+        artifact_store: ArtifactStore | None = None,
     ) -> None:
         """
         Initialize agent.
@@ -177,8 +177,8 @@ Current task phase: {self.phase}
     def call_llm(
         self,
         user_message: str,
-        system_prompt: Optional[str] = None,
-        context_messages: Optional[List[Dict[str, str]]] = None,
+        system_prompt: str | None = None,
+        context_messages: list[dict[str, str]] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """
@@ -193,7 +193,7 @@ Current task phase: {self.phase}
         Returns:
             LLM response
         """
-        messages: List[Dict[str, str]] = []
+        messages: list[dict[str, str]] = []
 
         # Add system prompt
         system = system_prompt or self.get_system_prompt()
@@ -223,9 +223,9 @@ Current task phase: {self.phase}
     def call_llm_structured(
         self,
         user_message: str,
-        response_model: Type[T],
-        system_prompt: Optional[str] = None,
-        context_messages: Optional[List[Dict[str, str]]] = None,
+        response_model: type[T],
+        system_prompt: str | None = None,
+        context_messages: list[dict[str, str]] | None = None,
         **kwargs: Any,
     ) -> T:
         """
@@ -264,17 +264,17 @@ Do not include any other text, markdown formatting, or code blocks. Only output 
 
         # Parse response
         content = response.content.strip()
-        
+
         # Remove potential markdown code blocks
         if content.startswith("```"):
             content = re.sub(r"^```(?:json)?\n?", "", content)
             content = re.sub(r"\n?```$", "", content)
-        
+
         # Extract JSON from response
         json_match = re.search(r"\{.*\}", content, re.DOTALL)
         if json_match:
             content = json_match.group()
-        
+
         try:
             data = json.loads(content)
             return response_model.model_validate(data)
@@ -285,17 +285,17 @@ Do not include any other text, markdown formatting, or code blocks. Only output 
                 error=str(e),
                 content=content[:500],
             )
-            raise ValueError(f"Failed to parse LLM response: {e}")
+            raise ValueError(f"Failed to parse LLM response: {e}") from e
 
     async def acall_llm(
         self,
         user_message: str,
-        system_prompt: Optional[str] = None,
-        context_messages: Optional[List[Dict[str, str]]] = None,
+        system_prompt: str | None = None,
+        context_messages: list[dict[str, str]] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
         """Async version of call_llm."""
-        messages: List[Dict[str, str]] = []
+        messages: list[dict[str, str]] = []
         system = system_prompt or self.get_system_prompt()
         messages.append({"role": "system", "content": system})
 
@@ -319,9 +319,9 @@ Do not include any other text, markdown formatting, or code blocks. Only output 
     async def acall_llm_structured(
         self,
         user_message: str,
-        response_model: Type[T],
-        system_prompt: Optional[str] = None,
-        context_messages: Optional[List[Dict[str, str]]] = None,
+        response_model: type[T],
+        system_prompt: str | None = None,
+        context_messages: list[dict[str, str]] | None = None,
         **kwargs: Any,
     ) -> T:
         """Async version of call_llm_structured."""
@@ -344,15 +344,15 @@ Do not include any other text, markdown formatting, or code blocks. Only output 
         )
 
         content = response.content.strip()
-        
+
         if content.startswith("```"):
             content = re.sub(r"^```(?:json)?\n?", "", content)
             content = re.sub(r"\n?```$", "", content)
-        
+
         json_match = re.search(r"\{.*\}", content, re.DOTALL)
         if json_match:
             content = json_match.group()
-        
+
         try:
             data = json.loads(content)
             return response_model.model_validate(data)
@@ -362,7 +362,7 @@ Do not include any other text, markdown formatting, or code blocks. Only output 
                 agent=self.name,
                 error=str(e),
             )
-            raise ValueError(f"Failed to parse LLM response: {e}")
+            raise ValueError(f"Failed to parse LLM response: {e}") from e
 
     def save_artifact(
         self,
@@ -479,7 +479,7 @@ Do not include any other text, markdown formatting, or code blocks. Only output 
 
         return result
 
-    def validate_inputs(self, context: AgentContext) -> List[str]:
+    def validate_inputs(self, context: AgentContext) -> list[str]:
         """
         Validate inputs before execution.
 
@@ -520,7 +520,7 @@ Please review and choose an action:
 - ROLLBACK: Rollback to previous checkpoint
 """
 
-    def _format_outputs(self, outputs: Dict[str, Any]) -> str:
+    def _format_outputs(self, outputs: dict[str, Any]) -> str:
         """Format outputs for display."""
         lines = []
         for key, value in outputs.items():

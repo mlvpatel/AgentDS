@@ -8,28 +8,25 @@ Author: Malav Patel
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from collections.abc import Generator
+from typing import Any
 
 import gradio as gr
 
-from agentds.agents import AgentAction
 from agentds.core.config import Settings, get_settings
-from agentds.core.job_queue import JobQueue, JobStatus
+from agentds.core.job_queue import JobQueue
 from agentds.core.logger import get_logger, setup_logging
 from agentds.workflows.pipeline import AgentDSPipeline, PipelineConfig, PipelinePhase
 
 logger = get_logger(__name__)
 
 # Global state for active pipelines
-_active_pipelines: Dict[str, Dict[str, Any]] = {}
+_active_pipelines: dict[str, dict[str, Any]] = {}
 
 
-def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
+def create_app(settings: Settings | None = None) -> gr.Blocks:
     """
     Create Gradio application.
 
@@ -48,10 +45,10 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
     .status-completed { color: #22c55e; font-weight: bold; }
     .status-failed { color: #ef4444; font-weight: bold; }
     .status-paused { color: #f59e0b; font-weight: bold; }
-    .agent-card { 
-        border: 1px solid #e5e7eb; 
-        border-radius: 8px; 
-        padding: 16px; 
+    .agent-card {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 16px;
         margin: 8px 0;
     }
     .progress-bar {
@@ -68,7 +65,7 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
     ) as app:
         # State variables
         job_id_state = gr.State(value=None)
-        pipeline_state = gr.State(value={})
+        gr.State(value={})
 
         # Header
         gr.Markdown(
@@ -80,99 +77,98 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
             """
         )
 
-        with gr.Tabs() as tabs:
+        with gr.Tabs():
             # ==================== TAB 1: Pipeline ====================
-            with gr.Tab("Pipeline", id="pipeline"):
-                with gr.Row():
-                    # Left column: Configuration
-                    with gr.Column(scale=1):
-                        gr.Markdown("### Configuration")
+            with gr.Tab("Pipeline", id="pipeline"), gr.Row():
+                # Left column: Configuration
+                with gr.Column(scale=1):
+                    gr.Markdown("### Configuration")
 
-                        # Data source
-                        data_file = gr.File(
-                            label="Upload Data File",
-                            file_types=[".csv", ".parquet", ".json", ".xlsx"],
+                    # Data source
+                    data_file = gr.File(
+                        label="Upload Data File",
+                        file_types=[".csv", ".parquet", ".json", ".xlsx"],
+                    )
+                    data_url = gr.Textbox(
+                        label="Or Enter Data URL",
+                        placeholder="s3://bucket/data.csv or https://...",
+                    )
+
+                    # Task description
+                    task_desc = gr.Textbox(
+                        label="Task Description",
+                        placeholder="Predict customer churn based on transaction history...",
+                        lines=3,
+                    )
+
+                    # Advanced options
+                    with gr.Accordion("Advanced Options", open=False):
+                        phases = gr.CheckboxGroup(
+                            choices=["build", "deploy", "learn"],
+                            value=["build", "deploy"],
+                            label="Pipeline Phases",
                         )
-                        data_url = gr.Textbox(
-                            label="Or Enter Data URL",
-                            placeholder="s3://bucket/data.csv or https://...",
+                        human_loop = gr.Checkbox(
+                            value=True,
+                            label="Human-in-the-Loop",
                         )
-
-                        # Task description
-                        task_desc = gr.Textbox(
-                            label="Task Description",
-                            placeholder="Predict customer churn based on transaction history...",
-                            lines=3,
-                        )
-
-                        # Advanced options
-                        with gr.Accordion("Advanced Options", open=False):
-                            phases = gr.CheckboxGroup(
-                                choices=["build", "deploy", "learn"],
-                                value=["build", "deploy"],
-                                label="Pipeline Phases",
-                            )
-                            human_loop = gr.Checkbox(
-                                value=True,
-                                label="Human-in-the-Loop",
-                            )
-                            llm_preset = gr.Dropdown(
-                                choices=["balanced", "budget", "quality", "local"],
-                                value="balanced",
-                                label="LLM Preset",
-                            )
-
-                        # Start button
-                        start_btn = gr.Button(
-                            "Start Pipeline",
-                            variant="primary",
-                            size="lg",
+                        llm_preset = gr.Dropdown(
+                            choices=["balanced", "budget", "quality", "local"],
+                            value="balanced",
+                            label="LLM Preset",
                         )
 
-                    # Right column: Progress and outputs
-                    with gr.Column(scale=2):
-                        gr.Markdown("### Pipeline Progress")
+                    # Start button
+                    start_btn = gr.Button(
+                        "Start Pipeline",
+                        variant="primary",
+                        size="lg",
+                    )
 
-                        # Status display
-                        status_md = gr.Markdown("Ready to start...")
+                # Right column: Progress and outputs
+                with gr.Column(scale=2):
+                    gr.Markdown("### Pipeline Progress")
 
-                        # Progress bar
-                        progress_bar = gr.Slider(
-                            minimum=0,
-                            maximum=100,
-                            value=0,
-                            label="Progress",
-                            interactive=False,
-                        )
+                    # Status display
+                    status_md = gr.Markdown("Ready to start...")
 
-                        # Current agent output
-                        agent_output = gr.Markdown(
-                            label="Current Agent",
-                            value="No agent running",
-                        )
+                    # Progress bar
+                    progress_bar = gr.Slider(
+                        minimum=0,
+                        maximum=100,
+                        value=0,
+                        label="Progress",
+                        interactive=False,
+                    )
 
-                        # Human-in-the-loop controls
-                        with gr.Row(visible=False) as hitl_controls:
-                            approve_btn = gr.Button("Approve & Continue", variant="primary")
-                            rerun_btn = gr.Button("Re-run")
-                            skip_btn = gr.Button("Skip")
-                            stop_btn = gr.Button("Stop Pipeline", variant="stop")
+                    # Current agent output
+                    agent_output = gr.Markdown(
+                        label="Current Agent",
+                        value="No agent running",
+                    )
 
-                        # Feedback input
-                        feedback_input = gr.Textbox(
-                            label="Feedback (optional)",
-                            placeholder="Enter feedback for re-run...",
-                            visible=False,
-                        )
-                        rerun_feedback_btn = gr.Button(
-                            "Re-run with Feedback",
-                            visible=False,
-                        )
+                    # Human-in-the-loop controls
+                    with gr.Row(visible=False):
+                        approve_btn = gr.Button("Approve & Continue", variant="primary")
+                        rerun_btn = gr.Button("Re-run")
+                        skip_btn = gr.Button("Skip")
+                        stop_btn = gr.Button("Stop Pipeline", variant="stop")
 
-                        # Output artifacts
-                        with gr.Accordion("Output Artifacts", open=False):
-                            artifacts_list = gr.JSON(label="Artifacts")
-                            download_btn = gr.Button("Download All Outputs")
+                    # Feedback input
+                    feedback_input = gr.Textbox(
+                        label="Feedback (optional)",
+                        placeholder="Enter feedback for re-run...",
+                        visible=False,
+                    )
+                    gr.Button(
+                        "Re-run with Feedback",
+                        visible=False,
+                    )
+
+                    # Output artifacts
+                    with gr.Accordion("Output Artifacts", open=False):
+                        artifacts_list = gr.JSON(label="Artifacts")
+                        gr.Button("Download All Outputs")
 
             # ==================== TAB 2: Agents ====================
             with gr.Tab("Agents", id="agents"):
@@ -197,24 +193,24 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
                 with gr.Row():
                     with gr.Column():
                         gr.Markdown("#### API Keys")
-                        openai_key = gr.Textbox(
+                        gr.Textbox(
                             label="OpenAI API Key",
                             type="password",
                             placeholder="sk-...",
                         )
-                        anthropic_key = gr.Textbox(
+                        gr.Textbox(
                             label="Anthropic API Key",
                             type="password",
                             placeholder="sk-ant-...",
                         )
-                        groq_key = gr.Textbox(
+                        gr.Textbox(
                             label="Groq API Key",
                             type="password",
                         )
 
                     with gr.Column():
                         gr.Markdown("#### Model Settings")
-                        default_model = gr.Dropdown(
+                        gr.Dropdown(
                             choices=[
                                 "openai/gpt-4o",
                                 "openai/gpt-4o-mini",
@@ -225,7 +221,7 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
                             value="openai/gpt-4o-mini",
                             label="Default Model",
                         )
-                        temperature = gr.Slider(
+                        gr.Slider(
                             minimum=0.0,
                             maximum=1.0,
                             value=0.0,
@@ -233,7 +229,7 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
                             label="Temperature",
                         )
 
-                save_config_btn = gr.Button("Save Configuration")
+                gr.Button("Save Configuration")
 
             # ==================== TAB 4: Jobs ====================
             with gr.Tab("Jobs", id="jobs"):
@@ -259,13 +255,13 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
         # ==================== Event Handlers ====================
 
         def start_pipeline(
-            data_file: Optional[Any],
+            data_file: Any | None,
             data_url: str,
             task_desc: str,
-            phases: List[str],
+            phases: list[str],
             human_loop: bool,
             llm_preset: str,
-        ) -> Generator[Tuple[str, float, str, Dict], None, None]:
+        ) -> Generator[tuple[str, float, str, dict], None, None]:
             """Start the pipeline and stream progress."""
             # Validate inputs
             if not data_file and not data_url:
@@ -277,10 +273,7 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
                 return
 
             # Determine data source
-            if data_file:
-                data_source = data_file.name
-            else:
-                data_source = data_url
+            data_source = data_file.name if data_file else data_url
 
             # Create pipeline config
             phase_enums = [PipelinePhase(p) for p in phases]
@@ -312,7 +305,7 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
                 total_agents = sum(len(pipeline.PHASE_AGENTS.get(p, [])) for p in phase_enums)
                 completed = 0
 
-                for agent_name in pipeline._agents.keys():
+                for agent_name in pipeline._agents:
                     _active_pipelines[job_id]["current_agent"] = agent_name
 
                     status = f"Running: {agent_name}"
@@ -332,7 +325,7 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
             except Exception as e:
                 yield f"Error: {str(e)}", 0, f"Pipeline failed: {e}", {}
 
-        def handle_approve(job_id: str) -> Tuple[str, str]:
+        def handle_approve(job_id: str) -> tuple[str, str]:
             """Handle approve action."""
             if job_id and job_id in _active_pipelines:
                 pipeline_data = _active_pipelines[job_id]
@@ -340,26 +333,26 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
                 return "Approved! Continuing...", ""
             return "No active pipeline", ""
 
-        def handle_rerun(job_id: str) -> Tuple[str, str]:
+        def handle_rerun(job_id: str) -> tuple[str, str]:
             """Handle rerun action."""
             if job_id and job_id in _active_pipelines:
                 return "Re-running current agent...", ""
             return "No active pipeline", ""
 
-        def handle_skip(job_id: str) -> Tuple[str, str]:
+        def handle_skip(job_id: str) -> tuple[str, str]:
             """Handle skip action."""
             if job_id and job_id in _active_pipelines:
                 return "Skipping current agent...", ""
             return "No active pipeline", ""
 
-        def handle_stop(job_id: str) -> Tuple[str, str]:
+        def handle_stop(job_id: str) -> tuple[str, str]:
             """Handle stop action."""
             if job_id and job_id in _active_pipelines:
                 _active_pipelines[job_id]["status"] = "stopped"
                 return "Pipeline stopped by user", ""
             return "No active pipeline", ""
 
-        def refresh_jobs() -> List[List[str]]:
+        def refresh_jobs() -> list[list[str]]:
             """Refresh job list."""
             jobs = job_queue.list_jobs(limit=50)
             return [
@@ -377,7 +370,7 @@ def create_app(settings: Optional[Settings] = None) -> gr.Blocks:
             """Refresh log output."""
             log_file = settings.log_dir / "agentds.log"
             if log_file.exists():
-                with open(log_file, "r") as f:
+                with open(log_file) as f:
                     lines = f.readlines()[-100:]  # Last 100 lines
                     return "".join(lines)
             return "No logs available"
@@ -430,7 +423,7 @@ def launch_app(
     host: str = "0.0.0.0",
     port: int = 7860,
     share: bool = False,
-    settings: Optional[Settings] = None,
+    settings: Settings | None = None,
 ) -> None:
     """
     Launch the Gradio application.

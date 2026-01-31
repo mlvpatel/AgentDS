@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from litestar import Litestar, Router, get, post, delete
+from litestar import Litestar, Router, delete, get, post
 from litestar.config.cors import CORSConfig
 from litestar.openapi import OpenAPIConfig
 from litestar.response import Response
@@ -34,8 +34,8 @@ class PipelineStartRequest(BaseModel):
 
     data_source: str = Field(..., description="Path or URL to input data")
     task_description: str = Field(..., description="Description of the ML task")
-    output_destination: Optional[str] = Field(None, description="Output directory")
-    phases: List[str] = Field(
+    output_destination: str | None = Field(None, description="Output directory")
+    phases: list[str] = Field(
         default=["build", "deploy"],
         description="Pipeline phases to run",
     )
@@ -56,12 +56,12 @@ class PipelineStatusResponse(BaseModel):
 
     job_id: str
     status: str
-    current_agent: Optional[str]
+    current_agent: str | None
     progress_percent: float
-    started_at: Optional[str]
-    completed_at: Optional[str]
-    error: Optional[str]
-    outputs: Dict[str, Any]
+    started_at: str | None
+    completed_at: str | None
+    error: str | None
+    outputs: dict[str, Any]
 
 
 class AgentRunRequest(BaseModel):
@@ -69,23 +69,23 @@ class AgentRunRequest(BaseModel):
 
     agent_name: str = Field(..., description="Name of the agent to run")
     data_source: str = Field(..., description="Input data path")
-    task_description: Optional[str] = Field(None, description="Task description")
-    config: Dict[str, Any] = Field(default_factory=dict, description="Agent config")
+    task_description: str | None = Field(None, description="Task description")
+    config: dict[str, Any] = Field(default_factory=dict, description="Agent config")
 
 
 class ActionRequest(BaseModel):
     """Request for human-in-the-loop action."""
 
     action: str = Field(..., description="Action: approve, rerun, skip, stop")
-    feedback: Optional[str] = Field(None, description="Optional feedback")
+    feedback: str | None = Field(None, description="Optional feedback")
 
 
 class ConfigUpdateRequest(BaseModel):
     """Request to update configuration."""
 
-    llm_config: Optional[Dict[str, Any]] = None
-    pipeline_config: Optional[Dict[str, Any]] = None
-    feature_flags: Optional[Dict[str, bool]] = None
+    llm_config: dict[str, Any] | None = None
+    pipeline_config: dict[str, Any] | None = None
+    feature_flags: dict[str, bool] | None = None
 
 
 class HealthResponse(BaseModel):
@@ -94,22 +94,22 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     timestamp: str
-    components: Dict[str, bool]
+    components: dict[str, bool]
 
 
 class ErrorResponse(BaseModel):
     """Error response."""
 
     error: str
-    detail: Optional[str] = None
+    detail: str | None = None
     timestamp: str
 
 
 # ==================== Global State ====================
 
-_settings: Optional[Settings] = None
-_job_queue: Optional[JobQueue] = None
-_active_pipelines: Dict[str, Any] = {}
+_settings: Settings | None = None
+_job_queue: JobQueue | None = None
+_active_pipelines: dict[str, Any] = {}
 
 
 def get_dependencies() -> tuple[Settings, JobQueue]:
@@ -232,7 +232,7 @@ async def get_pipeline_status(job_id: str) -> PipelineStatusResponse:
 
 
 @post("/pipeline/cancel/{job_id:str}")
-async def cancel_pipeline(job_id: str) -> Dict[str, str]:
+async def cancel_pipeline(job_id: str) -> dict[str, str]:
     """Cancel a running pipeline."""
     settings, job_queue = get_dependencies()
 
@@ -250,7 +250,7 @@ async def cancel_pipeline(job_id: str) -> Dict[str, str]:
 
 
 @post("/pipeline/action/{job_id:str}")
-async def pipeline_action(job_id: str, data: ActionRequest) -> Dict[str, str]:
+async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, str]:
     """Handle human-in-the-loop action."""
     settings, job_queue = get_dependencies()
 
@@ -282,7 +282,7 @@ async def pipeline_action(job_id: str, data: ActionRequest) -> Dict[str, str]:
     pipeline = pipeline_data["pipeline"]
 
     try:
-        result = pipeline.resume(
+        pipeline.resume(
             job_id=job_id,
             user_action=action.value,
             user_feedback=data.feedback,
@@ -306,7 +306,7 @@ async def pipeline_action(job_id: str, data: ActionRequest) -> Dict[str, str]:
 
 
 @post("/agent/run")
-async def run_agent(data: AgentRunRequest) -> Dict[str, Any]:
+async def run_agent(data: AgentRunRequest) -> dict[str, Any]:
     """Run a single agent independently."""
     settings, job_queue = get_dependencies()
 
@@ -370,9 +370,9 @@ async def run_agent(data: AgentRunRequest) -> Dict[str, Any]:
 
 @get("/jobs")
 async def list_jobs(
-    status: Optional[str] = None,
+    status: str | None = None,
     limit: int = 50,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """List all jobs."""
     settings, job_queue = get_dependencies()
 
@@ -396,7 +396,7 @@ async def list_jobs(
 
 
 @get("/jobs/{job_id:str}")
-async def get_job(job_id: str) -> Dict[str, Any]:
+async def get_job(job_id: str) -> dict[str, Any]:
     """Get job details."""
     settings, job_queue = get_dependencies()
 
@@ -414,7 +414,7 @@ async def get_job(job_id: str) -> Dict[str, Any]:
 
 
 @delete("/jobs/{job_id:str}")
-async def delete_job(job_id: str) -> Dict[str, str]:
+async def delete_job(job_id: str) -> dict[str, str]:
     """Delete a job."""
     settings, job_queue = get_dependencies()
 
@@ -431,7 +431,7 @@ async def delete_job(job_id: str) -> Dict[str, str]:
 
 
 @post("/config/update")
-async def update_config(data: ConfigUpdateRequest) -> Dict[str, str]:
+async def update_config(data: ConfigUpdateRequest) -> dict[str, str]:
     """Update configuration."""
     # In production, this would persist configuration changes
     return {
@@ -441,7 +441,7 @@ async def update_config(data: ConfigUpdateRequest) -> Dict[str, str]:
 
 
 @get("/config")
-async def get_config() -> Dict[str, Any]:
+async def get_config() -> dict[str, Any]:
     """Get current configuration."""
     settings, _ = get_dependencies()
 

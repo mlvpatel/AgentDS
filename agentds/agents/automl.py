@@ -11,11 +11,10 @@ from __future__ import annotations
 import json
 import pickle
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import polars as pl
-from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -26,6 +25,7 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
+from sklearn.model_selection import cross_val_score, train_test_split
 
 from agentds.agents.base import (
     AgentContext,
@@ -197,7 +197,7 @@ Prioritize XGBoost and LightGBM for tabular data. Use simpler models for small d
 
     def _prepare_data(
         self, df: pl.DataFrame, target_col: str
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Prepare data for training."""
         pdf = df.to_pandas()
 
@@ -214,7 +214,7 @@ Prioritize XGBoost and LightGBM for tabular data. Use simpler models for small d
         df: pl.DataFrame,
         task_type: str,
         context: AgentContext,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get model configuration from LLM."""
         prompt = f"""Configure AutoML for this task.
 
@@ -284,9 +284,9 @@ Output as JSON.
         self,
         X: np.ndarray,
         y: np.ndarray,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         task_type: str,
-    ) -> Tuple[Any, Dict[str, Any], float, List[Dict[str, Any]]]:
+    ) -> tuple[Any, dict[str, Any], float, list[dict[str, Any]]]:
         """Run hyperparameter optimization with Optuna."""
         import optuna
         from xgboost import XGBClassifier, XGBRegressor
@@ -351,7 +351,7 @@ Output as JSON.
         X: np.ndarray,
         y: np.ndarray,
         task_type: str,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Calculate model metrics."""
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, random_state=42
@@ -384,8 +384,8 @@ Output as JSON.
         return metrics
 
     def _get_feature_importance(
-        self, model: Any, columns: List[str]
-    ) -> Dict[str, float]:
+        self, model: Any, columns: list[str]
+    ) -> dict[str, float]:
         """Get feature importance from model."""
         importance = {}
 
@@ -406,9 +406,9 @@ Output as JSON.
 
     def _format_approval_message(
         self,
-        metrics: Dict[str, float],
-        params: Dict[str, Any],
-        importance: Dict[str, float],
+        metrics: dict[str, float],
+        params: dict[str, Any],
+        importance: dict[str, float],
     ) -> str:
         """Format approval message for human review."""
         metrics_text = "\n".join(

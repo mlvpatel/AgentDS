@@ -272,7 +272,7 @@ class LogContext:
         self._job_token: Any | None = None
         self._agent_token: Any | None = None
 
-    def __enter__(self) -> "LogContext":
+    def __enter__(self) -> LogContext:
         """Enter context and set variables."""
         if self.job_id:
             self._job_token = job_id_ctx.set(self.job_id)

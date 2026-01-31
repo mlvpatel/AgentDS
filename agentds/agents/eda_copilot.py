@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import polars as pl
 
@@ -156,7 +156,7 @@ Be specific and actionable in your insights. Focus on what matters for the ML ta
 
         return result
 
-    def _generate_statistics(self, df: pl.DataFrame) -> Dict[str, Any]:
+    def _generate_statistics(self, df: pl.DataFrame) -> dict[str, Any]:
         """Generate statistical summary."""
         stats = {
             "shape": {"rows": df.height, "columns": df.width},
@@ -166,7 +166,7 @@ Be specific and actionable in your insights. Focus on what matters for the ML ta
 
         for col in df.columns:
             col_data = df[col]
-            col_stats: Dict[str, Any] = {
+            col_stats: dict[str, Any] = {
                 "dtype": str(col_data.dtype),
                 "null_count": col_data.null_count(),
                 "null_percent": round(col_data.null_count() / df.height * 100, 2),
@@ -195,7 +195,7 @@ Be specific and actionable in your insights. Focus on what matters for the ML ta
 
         return stats
 
-    def _generate_correlations(self, df: pl.DataFrame) -> Dict[str, Any]:
+    def _generate_correlations(self, df: pl.DataFrame) -> dict[str, Any]:
         """Generate correlation analysis for numeric columns."""
         numeric_cols = [
             col for col in df.columns
@@ -233,10 +233,10 @@ Be specific and actionable in your insights. Focus on what matters for the ML ta
     def _generate_insights(
         self,
         df: pl.DataFrame,
-        stats: Dict[str, Any],
-        correlations: Dict[str, Any],
+        stats: dict[str, Any],
+        correlations: dict[str, Any],
         context: AgentContext,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Generate AI-powered insights."""
         # Prepare summary for LLM
         summary = {
@@ -291,9 +291,9 @@ Output as JSON.
     def _generate_html_dashboard(
         self,
         df: pl.DataFrame,
-        stats: Dict[str, Any],
-        correlations: Dict[str, Any],
-        insights: Dict[str, Any],
+        stats: dict[str, Any],
+        correlations: dict[str, Any],
+        insights: dict[str, Any],
     ) -> str:
         """Generate HTML dashboard."""
         # Generate column cards
@@ -431,7 +431,7 @@ Output as JSON.
         return html
 
     def _format_approval_message(
-        self, stats: Dict[str, Any], insights: Dict[str, Any]
+        self, stats: dict[str, Any], insights: dict[str, Any]
     ) -> str:
         """Format approval message for human review."""
         findings_text = "\n".join(

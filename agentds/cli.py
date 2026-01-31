@@ -9,8 +9,6 @@ Author: Malav Patel
 from __future__ import annotations
 
 import sys
-from pathlib import Path
-from typing import List, Optional
 import uuid
 
 import click
@@ -187,7 +185,6 @@ def agent(ctx: click.Context, agent_name: str, data_source: str, output: str) ->
 @click.pass_context
 def status(ctx: click.Context) -> None:
     """Check system status and connections."""
-    from agentds.core.llm_gateway import LLMGateway
 
     click.echo("[INFO] Checking AgentDS system status...")
     click.echo("")

@@ -9,8 +9,7 @@ Author: Malav Patel
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from agentds.agents.base import (
     AgentContext,
@@ -100,10 +99,10 @@ Output your API configuration in JSON format:
             if not prev_result:
                 raise ValueError("No input from AutoMLAgent")
 
-            model_path = prev_result.outputs.get("model_path")
-            metrics = prev_result.outputs.get("metrics", {})
+            prev_result.outputs.get("model_path")
+            prev_result.outputs.get("metrics", {})
             task_type = prev_result.outputs.get("task_type", "classification")
-            feature_importance = prev_result.outputs.get("feature_importance", {})
+            prev_result.outputs.get("feature_importance", {})
 
             # Get feature names from FeatureEngineerAgent
             fe_result = context.previous_results.get("FeatureEngineerAgent")
@@ -115,7 +114,7 @@ Output your API configuration in JSON format:
             if fe_plan:
                 input_features.extend(fe_plan.get("numeric_features", {}).get("columns", []))
                 input_features.extend(fe_plan.get("categorical_features", {}).get("columns", []))
-            
+
             # Fallback if plan is empty
             if not input_features:
                 input_features = feature_names
@@ -164,10 +163,10 @@ Output your API configuration in JSON format:
 
     def _get_api_config(
         self,
-        feature_names: List[str],
+        feature_names: list[str],
         task_type: str,
         context: AgentContext,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get API configuration from LLM."""
         prompt = f"""Generate API configuration for model serving.
 
@@ -207,8 +206,8 @@ Provide input/output schema and endpoint configuration as JSON.
 
     def _generate_api_code(
         self,
-        config: Dict[str, Any],
-        feature_names: List[str],
+        config: dict[str, Any],
+        feature_names: list[str],
         task_type: str,
     ) -> str:
         """Generate Litestar API code."""
@@ -341,7 +340,7 @@ async def predict(data: PredictionInput) -> PredictionOutput:
         raise ValueError("Model not loaded")
 
     # Create DataFrame with correct column names
-    input_data = {k: [getattr(data, k)] for k in data.model_fields.keys()}
+    input_data = {field: [getattr(data, field)] for field in data.model_fields.keys()}
     features = pd.DataFrame(input_data)
 
     # Apply preprocessing if available
@@ -380,7 +379,7 @@ async def predict_batch(data: BatchInput) -> BatchOutput:
     predictions = []
     for instance in data.instances:
         # Create DataFrame for single instance
-        input_data = {k: [getattr(instance, k)] for k in instance.model_fields.keys()}
+        input_data = {field: [getattr(instance, field)] for field in instance.model_fields.keys()}
         features = pd.DataFrame(input_data)
 
         pipeline = get_pipeline()
@@ -463,7 +462,7 @@ pydantic>=2.10.0
 python-dotenv>=1.0.0
 """
 
-    def _format_approval_message(self, config: Dict[str, Any]) -> str:
+    def _format_approval_message(self, config: dict[str, Any]) -> str:
         """Format approval message for human review."""
         endpoints = config.get("endpoints", [])
         endpoints_text = "\n".join(

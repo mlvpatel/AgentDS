@@ -8,10 +8,8 @@ Author: Malav Patel
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 from agentds.agents.base import (
     AgentContext,
@@ -591,7 +589,7 @@ jobs:
           # e.g., kubectl apply, docker-compose up, etc.
 '''
 
-    def _generate_kubernetes(self, context: AgentContext) -> Dict[str, str]:
+    def _generate_kubernetes(self, context: AgentContext) -> dict[str, str]:
         """Generate Kubernetes manifests."""
         manifests = {}
 

@@ -13,7 +13,7 @@ import shutil
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, BinaryIO, Dict, List, Optional, Union
+from typing import Any, BinaryIO
 
 from pydantic import BaseModel, Field
 
@@ -49,15 +49,15 @@ class Artifact(BaseModel):
     path: Path = Field(..., description="File path")
     size_bytes: int = Field(default=0)
     mime_type: str = Field(default="application/octet-stream")
-    checksum: Optional[str] = None
+    checksum: str | None = None
 
     # Metadata
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-    tags: List[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
 
     # Description
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class ArtifactStore:
@@ -67,7 +67,7 @@ class ArtifactStore:
     Supports local filesystem storage with optional cloud backends.
     """
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         """
         Initialize artifact store.
 
@@ -78,13 +78,13 @@ class ArtifactStore:
         self._base_path = self.settings.output_dir
         self._base_path.mkdir(parents=True, exist_ok=True)
         self._metadata_file = self._base_path / ".artifacts.json"
-        self._artifacts: Dict[str, Artifact] = self._load_metadata()
+        self._artifacts: dict[str, Artifact] = self._load_metadata()
 
-    def _load_metadata(self) -> Dict[str, Artifact]:
+    def _load_metadata(self) -> dict[str, Artifact]:
         """Load artifact metadata from disk."""
         if self._metadata_file.exists():
             try:
-                with open(self._metadata_file, "r") as f:
+                with open(self._metadata_file) as f:
                     data = json.load(f)
                 return {
                     k: Artifact(**v) for k, v in data.items()
@@ -145,11 +145,11 @@ class ArtifactStore:
         job_id: str,
         agent: str,
         name: str,
-        data: Union[bytes, str, BinaryIO, Path],
+        data: bytes | str | BinaryIO | Path,
         artifact_type: ArtifactType = ArtifactType.OTHER,
-        metadata: Optional[Dict[str, Any]] = None,
-        tags: Optional[List[str]] = None,
-        description: Optional[str] = None,
+        metadata: dict[str, Any] | None = None,
+        tags: list[str] | None = None,
+        description: str | None = None,
     ) -> Artifact:
         """
         Save an artifact.
@@ -212,11 +212,11 @@ class ArtifactStore:
 
         return artifact
 
-    def get(self, artifact_id: str) -> Optional[Artifact]:
+    def get(self, artifact_id: str) -> Artifact | None:
         """Get artifact by ID."""
         return self._artifacts.get(artifact_id)
 
-    def load(self, artifact_id: str) -> Optional[bytes]:
+    def load(self, artifact_id: str) -> bytes | None:
         """Load artifact data."""
         artifact = self.get(artifact_id)
         if artifact and artifact.path.exists():
@@ -224,7 +224,7 @@ class ArtifactStore:
                 return f.read()
         return None
 
-    def load_text(self, artifact_id: str) -> Optional[str]:
+    def load_text(self, artifact_id: str) -> str | None:
         """Load artifact as text."""
         data = self.load(artifact_id)
         if data:
@@ -244,11 +244,11 @@ class ArtifactStore:
 
     def list_artifacts(
         self,
-        job_id: Optional[str] = None,
-        agent: Optional[str] = None,
-        artifact_type: Optional[ArtifactType] = None,
-        tags: Optional[List[str]] = None,
-    ) -> List[Artifact]:
+        job_id: str | None = None,
+        agent: str | None = None,
+        artifact_type: ArtifactType | None = None,
+        tags: list[str] | None = None,
+    ) -> list[Artifact]:
         """
         List artifacts with optional filters.
 
@@ -274,11 +274,11 @@ class ArtifactStore:
             results.append(artifact)
         return results
 
-    def get_job_artifacts(self, job_id: str) -> List[Artifact]:
+    def get_job_artifacts(self, job_id: str) -> list[Artifact]:
         """Get all artifacts for a job."""
         return self.list_artifacts(job_id=job_id)
 
-    def get_artifact_path(self, artifact_id: str) -> Optional[Path]:
+    def get_artifact_path(self, artifact_id: str) -> Path | None:
         """Get file path for an artifact."""
         artifact = self.get(artifact_id)
         if artifact:
@@ -309,7 +309,7 @@ class ArtifactStore:
         logger.info("Job artifacts cleaned up", job_id=job_id, count=count)
         return count
 
-    def get_total_size(self, job_id: Optional[str] = None) -> int:
+    def get_total_size(self, job_id: str | None = None) -> int:
         """
         Get total size of artifacts.
 

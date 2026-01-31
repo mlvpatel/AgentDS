@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import polars as pl
 
@@ -199,7 +199,7 @@ Preserve as much original data as possible while ensuring quality.
 
         return min(sum(scores), 1.0)
 
-    def _identify_issues(self, df: pl.DataFrame) -> List[Dict[str, Any]]:
+    def _identify_issues(self, df: pl.DataFrame) -> list[dict[str, Any]]:
         """Identify data quality issues."""
         issues = []
 
@@ -252,9 +252,9 @@ Preserve as much original data as possible while ensuring quality.
     def _get_cleaning_plan(
         self,
         df: pl.DataFrame,
-        issues: List[Dict[str, Any]],
+        issues: list[dict[str, Any]],
         context: AgentContext,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get cleaning plan from LLM."""
         # Prepare data summary for LLM
         summary = {
@@ -305,8 +305,8 @@ Be conservative - only suggest operations that are clearly needed.
         }
 
     def _apply_cleaning(
-        self, df: pl.DataFrame, plan: Dict[str, Any]
-    ) -> tuple[pl.DataFrame, List[Dict[str, Any]]]:
+        self, df: pl.DataFrame, plan: dict[str, Any]
+    ) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
         """Apply cleaning operations from plan."""
         operations_applied = []
 
@@ -387,7 +387,7 @@ Be conservative - only suggest operations that are clearly needed.
 
         return df, operations_applied
 
-    def _format_approval_message(self, report: Dict[str, Any]) -> str:
+    def _format_approval_message(self, report: dict[str, Any]) -> str:
         """Format approval message for human review."""
         issues_text = "\n".join(
             f"  - [{i['severity']}] {i['column']}: {i['issue']}"

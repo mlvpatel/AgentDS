@@ -8,9 +8,9 @@ Author: Malav Patel
 
 from agentds.integrations.n8n import N8nClient, N8nWebhook
 from agentds.integrations.notifications import (
+    EmailNotifier,
     NotificationService,
     SlackNotifier,
-    EmailNotifier,
 )
 
 __all__ = [

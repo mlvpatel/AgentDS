@@ -22,21 +22,21 @@ Phase 3: Learn (Optimization Squad)
 Author: Malav Patel
 """
 
+from agentds.agents.api_wrapper import APIWrapperAgent
+from agentds.agents.automl import AutoMLAgent
 from agentds.agents.base import (
-    BaseAgent,
+    AgentAction,
     AgentResult,
     AgentStatus,
-    AgentAction,
+    BaseAgent,
 )
-from agentds.agents.data_loader import DataLoaderAgent
+from agentds.agents.cloud_deploy import CloudDeployAgent
 from agentds.agents.data_cleaning import DataCleaningAgent
+from agentds.agents.data_loader import DataLoaderAgent
+from agentds.agents.devops import DevOpsAgent
+from agentds.agents.drift_monitor import DriftMonitorAgent
 from agentds.agents.eda_copilot import EDACopilotAgent
 from agentds.agents.feature_engineer import FeatureEngineerAgent
-from agentds.agents.automl import AutoMLAgent
-from agentds.agents.api_wrapper import APIWrapperAgent
-from agentds.agents.devops import DevOpsAgent
-from agentds.agents.cloud_deploy import CloudDeployAgent
-from agentds.agents.drift_monitor import DriftMonitorAgent
 from agentds.agents.optimization import OptimizationAgent
 
 __all__ = [

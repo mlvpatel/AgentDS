@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any
 
 import litellm
 from litellm import acompletion, completion
@@ -24,7 +25,7 @@ from tenacity import (
 )
 
 from agentds.core.config import Settings, get_settings
-from agentds.core.logger import get_logger, get_logfire_span, log_llm_call
+from agentds.core.logger import get_logfire_span, get_logger, log_llm_call
 
 logger = get_logger(__name__)
 
@@ -42,7 +43,7 @@ class LLMResponse(BaseModel):
     content: str = Field(..., description="Response content")
     model: str = Field(..., description="Model used")
     provider: str = Field(..., description="Provider used")
-    usage: Dict[str, int] = Field(
+    usage: dict[str, int] = Field(
         default_factory=dict, description="Token usage statistics"
     )
     cost: float = Field(default=0.0, description="Estimated cost in USD")
@@ -53,10 +54,10 @@ class LLMResponse(BaseModel):
 class FallbackChain:
     """Fallback chain configuration."""
 
-    models: List[str] = field(default_factory=list)
+    models: list[str] = field(default_factory=list)
     current_index: int = 0
 
-    def get_current_model(self) -> Optional[str]:
+    def get_current_model(self) -> str | None:
         """Get current model in chain."""
         if self.current_index < len(self.models):
             return self.models[self.current_index]
@@ -83,7 +84,7 @@ class LLMGateway:
     - Logfire observability
     """
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         """
         Initialize LLM Gateway.
 
@@ -186,11 +187,11 @@ class LLMGateway:
     )
     def complete(
         self,
-        messages: List[Union[LLMMessage, Dict[str, str]]],
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        agent_name: Optional[str] = None,
+        messages: list[LLMMessage | dict[str, str]],
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        agent_name: str | None = None,
         use_fallback: bool = True,
         **kwargs: Any,
     ) -> LLMResponse:
@@ -317,11 +318,11 @@ class LLMGateway:
 
     async def acomplete(
         self,
-        messages: List[Union[LLMMessage, Dict[str, str]]],
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        agent_name: Optional[str] = None,
+        messages: list[LLMMessage | dict[str, str]],
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        agent_name: str | None = None,
         use_fallback: bool = True,
         **kwargs: Any,
     ) -> LLMResponse:
@@ -401,10 +402,10 @@ class LLMGateway:
 
     async def astream(
         self,
-        messages: List[Union[LLMMessage, Dict[str, str]]],
-        model: Optional[str] = None,
-        temperature: Optional[float] = None,
-        agent_name: Optional[str] = None,
+        messages: list[LLMMessage | dict[str, str]],
+        model: str | None = None,
+        temperature: float | None = None,
+        agent_name: str | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         """
@@ -453,7 +454,7 @@ class LLMGateway:
         """Reset cost tracking to zero."""
         self._total_cost = 0.0
 
-    def validate_connection(self, model: Optional[str] = None) -> bool:
+    def validate_connection(self, model: str | None = None) -> bool:
         """
         Validate connection to LLM provider.
 
@@ -476,7 +477,7 @@ class LLMGateway:
             logger.error("Connection validation failed", model=model, error=str(e))
             return False
 
-    def list_available_models(self) -> List[str]:
+    def list_available_models(self) -> list[str]:
         """List all configured models."""
         models = set()
         for agent_config in self.agent_mapping.values():

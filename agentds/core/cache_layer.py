@@ -14,7 +14,7 @@ import pickle
 from abc import ABC, abstractmethod
 from datetime import timedelta
 from functools import lru_cache
-from typing import Any, Optional, TypeVar, Union
+from typing import Any, TypeVar
 
 from agentds.core.config import Settings, get_settings
 from agentds.core.logger import get_logger
@@ -28,13 +28,13 @@ class CacheBackend(ABC):
     """Abstract base class for cache backends."""
 
     @abstractmethod
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """Get value from cache."""
         pass
 
     @abstractmethod
     def set(
-        self, key: str, value: Any, ttl: Optional[Union[int, timedelta]] = None
+        self, key: str, value: Any, ttl: int | timedelta | None = None
     ) -> bool:
         """Set value in cache."""
         pass
@@ -60,10 +60,10 @@ class MemoryCache(CacheBackend):
 
     def __init__(self) -> None:
         """Initialize memory cache."""
-        self._cache: dict[str, tuple[Any, Optional[float]]] = {}
+        self._cache: dict[str, tuple[Any, float | None]] = {}
         self._max_size = 1000
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """Get value from memory cache."""
         import time
 
@@ -78,7 +78,7 @@ class MemoryCache(CacheBackend):
         return value
 
     def set(
-        self, key: str, value: Any, ttl: Optional[Union[int, timedelta]] = None
+        self, key: str, value: Any, ttl: int | timedelta | None = None
     ) -> bool:
         """Set value in memory cache."""
         import time
@@ -135,7 +135,7 @@ class RedisCache(CacheBackend):
         """Add prefix to key."""
         return f"{self._prefix}{key}"
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """Get value from Redis."""
         try:
             data = self._client.get(self._make_key(key))
@@ -147,7 +147,7 @@ class RedisCache(CacheBackend):
             return None
 
     def set(
-        self, key: str, value: Any, ttl: Optional[Union[int, timedelta]] = None
+        self, key: str, value: Any, ttl: int | timedelta | None = None
     ) -> bool:
         """Set value in Redis."""
         try:
@@ -211,7 +211,7 @@ class CacheLayer:
     Tries Redis first, falls back to memory cache if unavailable.
     """
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         """
         Initialize cache layer.
 
@@ -237,7 +237,7 @@ class CacheLayer:
         self._backend = MemoryCache()
         logger.info("Using memory cache backend")
 
-    def get(self, key: str, default: Optional[T] = None) -> Optional[T]:
+    def get(self, key: str, default: T | None = None) -> T | None:
         """
         Get value from cache.
 
@@ -255,7 +255,7 @@ class CacheLayer:
         self,
         key: str,
         value: Any,
-        ttl: Optional[Union[int, timedelta]] = None,
+        ttl: int | timedelta | None = None,
     ) -> bool:
         """
         Set value in cache.
@@ -286,7 +286,7 @@ class CacheLayer:
         self,
         key: str,
         default_factory: Any,
-        ttl: Optional[Union[int, timedelta]] = None,
+        ttl: int | timedelta | None = None,
     ) -> Any:
         """
         Get value from cache, or compute and cache if not present.
@@ -303,10 +303,7 @@ class CacheLayer:
         if value is not None:
             return value
 
-        if callable(default_factory):
-            value = default_factory()
-        else:
-            value = default_factory
+        value = default_factory() if callable(default_factory) else default_factory
 
         self.set(key, value, ttl)
         return value
@@ -327,7 +324,7 @@ class CacheLayer:
         return hashlib.md5(key_data.encode()).hexdigest()
 
 
-@lru_cache()
+@lru_cache
 def get_cache() -> CacheLayer:
     """Get cached CacheLayer instance."""
     return CacheLayer()

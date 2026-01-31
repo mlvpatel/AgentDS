@@ -9,10 +9,11 @@ Author: Malav Patel
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from agentds.agents.base import (
     AgentContext,
@@ -32,9 +33,9 @@ class OptimizationTask:
 
     task_id: str
     agent_name: str
-    input_data: Dict[str, Any]
-    expected_output: Dict[str, Any]
-    actual_output: Optional[Dict[str, Any]] = None
+    input_data: dict[str, Any]
+    expected_output: dict[str, Any]
+    actual_output: dict[str, Any] | None = None
     reward: float = 0.0
 
 
@@ -46,7 +47,7 @@ class PromptTemplate:
     content: str
     version: int = 1
     performance_score: float = 0.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def format(self, **kwargs: Any) -> str:
         """Format prompt with variables."""
@@ -205,10 +206,10 @@ Guidelines:
 
     def _identify_optimization_targets(
         self,
-        drift_result: Optional[AgentResult],
-        user_feedback: Optional[str],
-        performance_metrics: Dict[str, Any],
-    ) -> List[str]:
+        drift_result: AgentResult | None,
+        user_feedback: str | None,
+        performance_metrics: dict[str, Any],
+    ) -> list[str]:
         """Identify which agents need prompt optimization."""
         targets = []
 
@@ -248,8 +249,8 @@ Guidelines:
         self,
         agent_name: str,
         context: AgentContext,
-        performance_metrics: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        performance_metrics: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Run APO optimization for a specific agent.
 
@@ -315,7 +316,7 @@ Guidelines:
         self,
         agent_name: str,
         prompt: str,
-        performance_metrics: Dict[str, Any],
+        performance_metrics: dict[str, Any],
     ) -> float:
         """Evaluate current prompt performance (0-1 reward)."""
         metrics = performance_metrics.get(agent_name, {})
@@ -401,7 +402,7 @@ Output only the improved prompt, no explanations."""
         addressed = sum(1 for k in critique_keywords if k in optimized_prompt.lower())
 
         # Estimate improvement based on changes made
-        length_change = len(optimized_prompt) - len(original_prompt)
+        len(optimized_prompt) - len(original_prompt)
         content_change = 1 - (
             len(set(original_prompt.split()) & set(optimized_prompt.split()))
             / max(len(set(original_prompt.split())), 1)
@@ -411,8 +412,8 @@ Output only the improved prompt, no explanations."""
         return round(improvement, 3)
 
     def _generate_optimization_report(
-        self, optimization_results: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, optimization_results: dict[str, dict[str, Any]]
+    ) -> dict[str, Any]:
         """Generate comprehensive optimization report."""
         return {
             "report_type": "prompt_optimization",
@@ -443,7 +444,7 @@ Output only the improved prompt, no explanations."""
         }
 
     def _format_approval_message(
-        self, optimization_results: Dict[str, Dict[str, Any]]
+        self, optimization_results: dict[str, dict[str, Any]]
     ) -> str:
         """Format approval message."""
         opt_summary = "\n".join(
@@ -484,8 +485,8 @@ Do you want to apply these optimizations?
 def run_apo_optimization(
     agent_rollout: Callable,
     initial_prompt: PromptTemplate,
-    train_tasks: List[OptimizationTask],
-    val_tasks: List[OptimizationTask],
+    train_tasks: list[OptimizationTask],
+    val_tasks: list[OptimizationTask],
     num_rounds: int = 5,
     beam_width: int = 3,
 ) -> PromptTemplate:

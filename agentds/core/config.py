@@ -9,10 +9,9 @@ Author: Malav Patel
 
 from __future__ import annotations
 
-import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 from pydantic import Field, field_validator, model_validator
@@ -28,28 +27,28 @@ class LLMSettings(BaseSettings):
     )
 
     # API Keys
-    openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
-    anthropic_api_key: Optional[str] = Field(default=None, alias="ANTHROPIC_API_KEY")
-    gemini_api_key: Optional[str] = Field(default=None, alias="GEMINI_API_KEY")
-    groq_api_key: Optional[str] = Field(default=None, alias="GROQ_API_KEY")
-    mistral_api_key: Optional[str] = Field(default=None, alias="MISTRAL_API_KEY")
-    together_api_key: Optional[str] = Field(default=None, alias="TOGETHERAI_API_KEY")
-    deepseek_api_key: Optional[str] = Field(default=None, alias="DEEPSEEK_API_KEY")
-    xai_api_key: Optional[str] = Field(default=None, alias="XAI_API_KEY")
-    cohere_api_key: Optional[str] = Field(default=None, alias="COHERE_API_KEY")
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
+    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
+    groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
+    mistral_api_key: str | None = Field(default=None, alias="MISTRAL_API_KEY")
+    together_api_key: str | None = Field(default=None, alias="TOGETHERAI_API_KEY")
+    deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
+    xai_api_key: str | None = Field(default=None, alias="XAI_API_KEY")
+    cohere_api_key: str | None = Field(default=None, alias="COHERE_API_KEY")
 
     # Azure OpenAI
-    azure_api_key: Optional[str] = Field(default=None, alias="AZURE_API_KEY")
-    azure_api_base: Optional[str] = Field(default=None, alias="AZURE_API_BASE")
+    azure_api_key: str | None = Field(default=None, alias="AZURE_API_KEY")
+    azure_api_base: str | None = Field(default=None, alias="AZURE_API_BASE")
     azure_api_version: str = Field(default="2024-02-01", alias="AZURE_API_VERSION")
 
     # Google Vertex AI
-    vertexai_project: Optional[str] = Field(default=None, alias="VERTEXAI_PROJECT")
+    vertexai_project: str | None = Field(default=None, alias="VERTEXAI_PROJECT")
     vertexai_location: str = Field(default="us-central1", alias="VERTEXAI_LOCATION")
 
     # AWS Bedrock
-    aws_access_key_id: Optional[str] = Field(default=None, alias="AWS_ACCESS_KEY_ID")
-    aws_secret_access_key: Optional[str] = Field(
+    aws_access_key_id: str | None = Field(default=None, alias="AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: str | None = Field(
         default=None, alias="AWS_SECRET_ACCESS_KEY"
     )
     aws_region_name: str = Field(default="us-east-1", alias="AWS_REGION_NAME")
@@ -65,7 +64,7 @@ class LLMSettings(BaseSettings):
     max_retries: int = Field(default=3, ge=0)
     request_timeout: int = Field(default=120, ge=10)
 
-    def get_available_providers(self) -> List[str]:
+    def get_available_providers(self) -> list[str]:
         """Return list of configured providers with valid API keys."""
         providers = []
         if self.openai_api_key:
@@ -123,7 +122,7 @@ class MLflowSettings(BaseSettings):
         default="http://localhost:5000", alias="MLFLOW_TRACKING_URI"
     )
     experiment_name: str = Field(default="agentds")
-    artifact_location: Optional[str] = Field(default=None)
+    artifact_location: str | None = Field(default=None)
 
 
 class Settings(BaseSettings):
@@ -159,7 +158,7 @@ class Settings(BaseSettings):
 
     # Security
     api_key_header: str = Field(default="X-API-Key")
-    api_keys: List[str] = Field(default_factory=list)
+    api_keys: list[str] = Field(default_factory=list)
 
     # Rate limiting
     rate_limit_per_minute: int = Field(default=60)
@@ -180,14 +179,14 @@ class Settings(BaseSettings):
 
     @field_validator("api_keys", mode="before")
     @classmethod
-    def parse_api_keys(cls, v: Any) -> List[str]:
+    def parse_api_keys(cls, v: Any) -> list[str]:
         """Parse API keys from comma-separated string."""
         if isinstance(v, str):
             return [k.strip() for k in v.split(",") if k.strip()]
         return v or []
 
     @model_validator(mode="after")
-    def create_directories(self) -> "Settings":
+    def create_directories(self) -> Settings:
         """Create necessary directories if they don't exist."""
         for dir_path in [
             self.output_dir,
@@ -198,22 +197,22 @@ class Settings(BaseSettings):
             dir_path.mkdir(parents=True, exist_ok=True)
         return self
 
-    def load_yaml_config(self, path: Path) -> Dict[str, Any]:
+    def load_yaml_config(self, path: Path) -> dict[str, Any]:
         """Load configuration from YAML file."""
         if not path.exists():
             return {}
-        with open(path, "r") as f:
+        with open(path) as f:
             return yaml.safe_load(f) or {}
 
-    def get_llm_config(self) -> Dict[str, Any]:
+    def get_llm_config(self) -> dict[str, Any]:
         """Load LLM configuration from YAML."""
         return self.load_yaml_config(self.llm_config_path)
 
-    def get_pipeline_config(self) -> Dict[str, Any]:
+    def get_pipeline_config(self) -> dict[str, Any]:
         """Load pipeline configuration from YAML."""
         return self.load_yaml_config(self.pipeline_config_path)
 
-    def get_feature_flags(self) -> Dict[str, Any]:
+    def get_feature_flags(self) -> dict[str, Any]:
         """Load feature flags from YAML."""
         config = self.load_yaml_config(self.feature_flags_path)
         # Apply environment-specific overrides
@@ -231,7 +230,7 @@ class Settings(BaseSettings):
         return feature.get("enabled", False)
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()

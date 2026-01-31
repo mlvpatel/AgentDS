@@ -9,7 +9,6 @@ Author: Malav Patel
 from __future__ import annotations
 
 import contextlib
-import subprocess
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -231,7 +230,7 @@ Best practices:
         # This is a simplified implementation
         # In production, use boto3 for full ECS deployment
 
-        prompt = f"""Generate AWS CLI commands for deploying a Docker container to ECS Fargate.
+        prompt = """Generate AWS CLI commands for deploying a Docker container to ECS Fargate.
 
 Requirements:
 - Use existing VPC and subnets

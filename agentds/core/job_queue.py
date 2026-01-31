@@ -9,10 +9,9 @@ Author: Malav Patel
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -53,34 +52,34 @@ class Job(BaseModel):
 
     # Job data
     task: str = Field(..., description="Task identifier")
-    args: List[Any] = Field(default_factory=list)
-    kwargs: Dict[str, Any] = Field(default_factory=dict)
+    args: list[Any] = Field(default_factory=list)
+    kwargs: dict[str, Any] = Field(default_factory=dict)
 
     # Metadata
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Progress tracking
-    current_agent: Optional[str] = None
+    current_agent: str | None = None
     current_step: int = Field(default=0)
     total_steps: int = Field(default=0)
     progress_percent: float = Field(default=0.0, ge=0.0, le=100.0)
 
     # Results
-    result: Optional[Any] = None
-    error: Optional[str] = None
+    result: Any | None = None
+    error: str | None = None
 
     # User interaction
     requires_approval: bool = Field(default=False)
-    user_feedback: Optional[str] = None
+    user_feedback: str | None = None
 
     def update_progress(
         self,
         step: int,
         total: int,
-        agent: Optional[str] = None,
+        agent: str | None = None,
     ) -> None:
         """Update job progress."""
         self.current_step = step
@@ -124,7 +123,7 @@ class Job(BaseModel):
         self.requires_approval = True
         self.updated_at = datetime.now(timezone.utc)
 
-    def resume(self, feedback: Optional[str] = None) -> None:
+    def resume(self, feedback: str | None = None) -> None:
         """Resume paused job."""
         self.status = JobStatus.RUNNING
         self.requires_approval = False
@@ -133,7 +132,7 @@ class Job(BaseModel):
         self.updated_at = datetime.now(timezone.utc)
 
     @property
-    def duration_seconds(self) -> Optional[float]:
+    def duration_seconds(self) -> float | None:
         """Calculate job duration in seconds."""
         if not self.started_at:
             return None
@@ -146,8 +145,8 @@ class InMemoryQueue:
 
     def __init__(self) -> None:
         """Initialize in-memory queue."""
-        self._jobs: Dict[str, Job] = {}
-        self._queue: List[str] = []
+        self._jobs: dict[str, Job] = {}
+        self._queue: list[str] = []
 
     def enqueue(self, job: Job) -> str:
         """Add job to queue."""
@@ -156,7 +155,7 @@ class InMemoryQueue:
         job.status = JobStatus.QUEUED
         return job.id
 
-    def get_job(self, job_id: str) -> Optional[Job]:
+    def get_job(self, job_id: str) -> Job | None:
         """Get job by ID."""
         return self._jobs.get(job_id)
 
@@ -178,9 +177,9 @@ class InMemoryQueue:
 
     def list_jobs(
         self,
-        status: Optional[JobStatus] = None,
+        status: JobStatus | None = None,
         limit: int = 100,
-    ) -> List[Job]:
+    ) -> list[Job]:
         """List jobs, optionally filtered by status."""
         jobs = list(self._jobs.values())
         if status:
@@ -218,7 +217,7 @@ class RedisQueue:
         job.status = JobStatus.QUEUED
         return job.id
 
-    def get_job(self, job_id: str) -> Optional[Job]:
+    def get_job(self, job_id: str) -> Job | None:
         """Get job by ID."""
         import pickle
 
@@ -242,9 +241,9 @@ class RedisQueue:
 
     def list_jobs(
         self,
-        status: Optional[JobStatus] = None,
+        status: JobStatus | None = None,
         limit: int = 100,
-    ) -> List[Job]:
+    ) -> list[Job]:
         """List jobs, optionally filtered by status."""
         import pickle
 
@@ -271,7 +270,7 @@ class JobQueue:
     Tries Redis first, falls back to in-memory queue if unavailable.
     """
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(self, settings: Settings | None = None) -> None:
         """
         Initialize job queue.
 
@@ -303,8 +302,8 @@ class JobQueue:
         self,
         name: str,
         task: str,
-        args: Optional[List[Any]] = None,
-        kwargs: Optional[Dict[str, Any]] = None,
+        args: list[Any] | None = None,
+        kwargs: dict[str, Any] | None = None,
         priority: JobPriority = JobPriority.NORMAL,
     ) -> Job:
         """
@@ -331,7 +330,7 @@ class JobQueue:
         logger.info("Job created", job_id=job.id, name=name, task=task)
         return job
 
-    def get_job(self, job_id: str) -> Optional[Job]:
+    def get_job(self, job_id: str) -> Job | None:
         """Get job by ID."""
         return self._backend.get_job(job_id)
 
@@ -345,9 +344,9 @@ class JobQueue:
 
     def list_jobs(
         self,
-        status: Optional[JobStatus] = None,
+        status: JobStatus | None = None,
         limit: int = 100,
-    ) -> List[Job]:
+    ) -> list[Job]:
         """List jobs."""
         return self._backend.list_jobs(status, limit)
 
@@ -371,7 +370,7 @@ class JobQueue:
             return True
         return False
 
-    def resume_job(self, job_id: str, feedback: Optional[str] = None) -> bool:
+    def resume_job(self, job_id: str, feedback: str | None = None) -> bool:
         """Resume a paused job."""
         job = self.get_job(job_id)
         if job and job.status == JobStatus.PAUSED:

@@ -10,28 +10,26 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Literal, Optional, TypedDict, Union
+from typing import Any, Literal, TypedDict
 
-from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
 from agentds.agents import (
     AGENT_REGISTRY,
     AgentAction,
     AgentResult,
-    AgentStatus,
     BaseAgent,
 )
 from agentds.agents.base import AgentContext
 from agentds.core.artifact_store import ArtifactStore
 from agentds.core.config import Settings, get_settings
-from agentds.core.job_queue import Job, JobQueue, JobStatus
+from agentds.core.job_queue import JobQueue
 from agentds.core.llm_gateway import LLMGateway
-from agentds.core.logger import LogContext, get_logger, set_job_context
+from agentds.core.logger import LogContext, get_logger
 
 logger = get_logger(__name__)
 
@@ -48,7 +46,7 @@ class PipelineConfig(BaseModel):
     """Pipeline configuration."""
 
     name: str = Field(default="AgentDS Pipeline")
-    phases: List[PipelinePhase] = Field(
+    phases: list[PipelinePhase] = Field(
         default=[PipelinePhase.BUILD, PipelinePhase.DEPLOY]
     )
     human_in_loop: bool = Field(default=True)
@@ -68,20 +66,20 @@ class PipelineState(TypedDict, total=False):
     # Execution state
     current_phase: str
     current_agent: str
-    agent_results: Dict[str, Dict[str, Any]]
+    agent_results: dict[str, dict[str, Any]]
 
     # Human-in-the-loop
     awaiting_approval: bool
-    user_action: Optional[str]
-    user_feedback: Optional[str]
+    user_action: str | None
+    user_feedback: str | None
 
     # Error handling
-    error: Optional[str]
+    error: str | None
     retry_count: int
 
     # Completion
     completed: bool
-    final_outputs: Dict[str, Any]
+    final_outputs: dict[str, Any]
 
 
 @dataclass
@@ -89,9 +87,9 @@ class PreflightCheckResult:
     """Result of pre-flight validation."""
 
     passed: bool
-    checks: Dict[str, bool] = field(default_factory=dict)
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    checks: dict[str, bool] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 class AgentDSPipeline:
@@ -129,8 +127,8 @@ class AgentDSPipeline:
 
     def __init__(
         self,
-        config: Optional[PipelineConfig] = None,
-        settings: Optional[Settings] = None,
+        config: PipelineConfig | None = None,
+        settings: Settings | None = None,
     ) -> None:
         """
         Initialize pipeline.
@@ -146,7 +144,7 @@ class AgentDSPipeline:
         self.job_queue = JobQueue(self.settings)
 
         # Initialize agents
-        self._agents: Dict[str, BaseAgent] = {}
+        self._agents: dict[str, BaseAgent] = {}
         self._init_agents()
 
         # Build graph
@@ -373,11 +371,7 @@ class AgentDSPipeline:
             state["awaiting_approval"] = False
             state["current_agent"] = self._get_next_agent(current_agent)
 
-        elif action == AgentAction.RERUN.value:
-            state["awaiting_approval"] = False
-            state["retry_count"] = state.get("retry_count", 0) + 1
-
-        elif action == AgentAction.RERUN_WITH_FEEDBACK.value:
+        elif action == AgentAction.RERUN.value or action == AgentAction.RERUN_WITH_FEEDBACK.value:
             state["awaiting_approval"] = False
             state["retry_count"] = state.get("retry_count", 0) + 1
             # user_feedback should already be set
@@ -470,7 +464,7 @@ class AgentDSPipeline:
                 return phase.value
         return "unknown"
 
-    def _get_next_agent(self, current_agent: Optional[str]) -> Optional[str]:
+    def _get_next_agent(self, current_agent: str | None) -> str | None:
         """Get next agent in execution order."""
         if not current_agent:
             return None
@@ -488,7 +482,7 @@ class AgentDSPipeline:
 
         return None
 
-    def _get_previous_agent(self, current_agent: Optional[str]) -> Optional[str]:
+    def _get_previous_agent(self, current_agent: str | None) -> str | None:
         """Get previous agent in execution order."""
         if not current_agent:
             return None
@@ -510,9 +504,9 @@ class AgentDSPipeline:
         self,
         data_source: str,
         task_description: str,
-        output_destination: Optional[str] = None,
-        job_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        output_destination: str | None = None,
+        job_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Run the complete pipeline.
 
@@ -594,8 +588,8 @@ class AgentDSPipeline:
         self,
         job_id: str,
         user_action: str,
-        user_feedback: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        user_feedback: str | None = None,
+    ) -> dict[str, Any]:
         """
         Resume pipeline after human review.
 

@@ -11,18 +11,17 @@ from __future__ import annotations
 import json
 import pickle
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import polars as pl
 from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import (
-    LabelEncoder,
     MinMaxScaler,
     OneHotEncoder,
     StandardScaler,
 )
-from sklearn.impute import SimpleImputer
 
 from agentds.agents.base import (
     AgentContext,
@@ -188,7 +187,7 @@ Be thoughtful about feature engineering - it significantly impacts model perform
 
     def _get_feature_plan(
         self, df: pl.DataFrame, context: AgentContext
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get feature engineering plan from LLM."""
         # Prepare column summary
         columns_info = []
@@ -263,9 +262,9 @@ Provide a comprehensive feature engineering plan as JSON.
     def _create_pipeline(
         self,
         df: pl.DataFrame,
-        plan: Dict[str, Any],
+        plan: dict[str, Any],
         target_col: str,
-    ) -> Tuple[Pipeline, List[str]]:
+    ) -> tuple[Pipeline, list[str]]:
         """Create sklearn preprocessing pipeline."""
         transformers = []
         feature_names = []
@@ -336,8 +335,8 @@ Provide a comprehensive feature engineering plan as JSON.
         df: pl.DataFrame,
         pipeline: Pipeline,
         target_col: str,
-        feature_names: List[str],
-    ) -> Tuple[Any, Any, pl.DataFrame]:
+        feature_names: list[str],
+    ) -> tuple[Any, Any, pl.DataFrame]:
         """Apply pipeline to data."""
         # Convert to pandas for sklearn
         pdf = df.to_pandas()
@@ -373,8 +372,8 @@ Provide a comprehensive feature engineering plan as JSON.
 
     def _format_approval_message(
         self,
-        plan: Dict[str, Any],
-        feature_names: List[str],
+        plan: dict[str, Any],
+        feature_names: list[str],
         target_col: str,
     ) -> str:
         """Format approval message for human review."""
