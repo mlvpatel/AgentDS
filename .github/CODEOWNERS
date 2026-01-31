@@ -1,0 +1,17 @@
+# Code Owners for AgentDS
+# These users will be automatically requested for review when someone opens a pull request
+
+# Default owners for everything in the repo
+*       @malavpatel
+
+# Core infrastructure
+/agentds/core/              @malavpatel
+/.github/                   @malavpatel
+/pyproject.toml             @malavpatel
+
+# Documentation
+/docs/                      @malavpatel
+/README.md                  @malavpatel
+
+# Configuration
+/config/                    @malavpatel
