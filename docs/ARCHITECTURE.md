@@ -577,6 +577,76 @@ Namespace: agentds
 +-----------------------------------------------------------------------+
 ```
 
+### API Security Middleware
+
+```
++===========================================================================+
+|                        API REQUEST FLOW                                    |
++===========================================================================+
+|                                                                           |
+|   Incoming Request                                                        |
+|        |                                                                  |
+|        v                                                                  |
+|   +------------------------+                                              |
+|   | AuthenticationMiddleware|                                             |
+|   |------------------------|                                              |
+|   | - Extract API key      |                                              |
+|   | - Validate key         |                                              |
+|   | - Set auth context     |                                              |
+|   +------------------------+                                              |
+|        | (401 if invalid)                                                 |
+|        v                                                                  |
+|   +------------------------+                                              |
+|   | RateLimitMiddleware    |                                              |
+|   |------------------------|                                              |
+|   | - Token bucket algo    |                                              |
+|   | - Per-key limits       |                                              |
+|   | - Add rate headers     |                                              |
+|   +------------------------+                                              |
+|        | (429 if exceeded)                                                |
+|        v                                                                  |
+|   +------------------------+                                              |
+|   | Route Handler          |                                              |
+|   +------------------------+                                              |
+|                                                                           |
++===========================================================================+
+```
+
+### Input Validation
+
+| Validation | Protection |
+|------------|------------|
+| Path Sanitization | Prevents directory traversal (../) |
+| File Size Limits | Prevents resource exhaustion (100MB default) |
+| Content-Type Validation | Ensures expected file formats |
+| URL Validation | Blocks localhost and private IPs |
+| SQL Query Validation | Allows only SELECT statements |
+
+### Exception Hierarchy
+
+```
+AgentDSError (base)
+├── ConfigurationError
+├── LLMError
+│   ├── LLMRateLimitError
+│   ├── LLMTimeoutError
+│   └── LLMConnectionError
+├── PipelineError
+│   ├── PipelineCancelledError
+│   └── PipelineTimeoutError
+├── AgentError
+│   └── AgentExecutionError
+├── ValidationError
+│   ├── PathTraversalError
+│   ├── FileSizeLimitError
+│   └── InvalidContentTypeError
+├── AuthenticationError
+│   └── InvalidAPIKeyError
+├── RateLimitError
+├── DataError
+└── JobError
+```
+
 ---
 
 ## Performance Considerations

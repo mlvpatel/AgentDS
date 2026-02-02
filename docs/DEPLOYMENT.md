@@ -439,13 +439,16 @@ kubectl logs -f deployment/agentds-web -n agentds | jq 'select(.level=="ERROR")'
 
 ## Security Checklist
 
-- [ ] API keys stored in secrets manager
+- [x] API keys stored in secrets manager
+- [x] API key authentication middleware
+- [x] Rate limiting (60 req/min default)
+- [x] Input validation (path traversal, file size, content-type)
 - [ ] HTTPS enabled with valid certificate
 - [ ] Network policies configured
 - [ ] Non-root container user
-- [ ] Resource limits set
-- [ ] Health checks configured
-- [ ] Logging enabled
+- [x] Resource limits set
+- [x] Health checks configured
+- [x] Logging enabled
 - [ ] Backup strategy defined
 
 ---

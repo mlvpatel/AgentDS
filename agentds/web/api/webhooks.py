@@ -477,8 +477,23 @@ api_router = Router(
 )
 
 
-def create_api() -> Litestar:
-    """Create Litestar API application."""
+def create_api(settings: Settings | None = None) -> Litestar:
+    """
+    Create Litestar API application.
+
+    Args:
+        settings: Application settings (optional)
+
+    Returns:
+        Configured Litestar application with auth and rate limiting
+    """
+    from agentds.web.api.middleware import (
+        AuthenticationMiddleware,
+        RateLimitMiddleware,
+    )
+
+    settings = settings or get_settings()
+
     return Litestar(
         route_handlers=[api_router],
         cors_config=CORSConfig(
@@ -491,6 +506,10 @@ def create_api() -> Litestar:
             version="1.0.0",
             description="REST API for AgentDS multi-agent data science pipeline",
         ),
+        middleware=[
+            AuthenticationMiddleware,
+            RateLimitMiddleware,
+        ],
     )
 
 

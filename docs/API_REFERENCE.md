@@ -20,6 +20,57 @@ Author: Malav Patel
 
 Base URL: `http://localhost:8000/api`
 
+### Authentication
+
+All API endpoints (except `/api/health` and `/api/docs`) require authentication via API key.
+
+**Header Authentication (Recommended):**
+```http
+X-API-Key: your-api-key-here
+```
+
+**Query Parameter Authentication:**
+```http
+GET /api/jobs?api_key=your-api-key-here
+```
+
+**Error Response (401 Unauthorized):**
+```json
+{
+  "error": "INVALID_API_KEY",
+  "message": "Invalid or missing API key",
+  "timestamp": "2026-02-02T08:50:00Z"
+}
+```
+
+> **Note:** In development mode with no API keys configured, all requests are allowed.
+
+### Rate Limiting
+
+API requests are rate-limited to protect service availability.
+
+**Default Limits:**
+- 60 requests per minute per API key
+- Burst allowance: 120 requests
+
+**Rate Limit Headers:**
+```http
+X-RateLimit-Limit: 60
+X-RateLimit-Remaining: 58
+```
+
+**Rate Limited Response (429 Too Many Requests):**
+```json
+{
+  "error": "RATE_LIMIT_EXCEEDED",
+  "message": "Rate limit exceeded. Retry after 15 seconds.",
+  "retry_after_seconds": 15,
+  "timestamp": "2026-02-02T08:50:00Z"
+}
+```
+
+---
+
 ### Health Check
 
 ```http
@@ -451,19 +502,40 @@ eventSource.addEventListener('pipeline_complete', (event) => {
 | 200 | Success |
 | 201 | Created |
 | 400 | Bad Request |
+| 401 | Unauthorized (invalid/missing API key) |
 | 404 | Not Found |
 | 422 | Validation Error |
+| 429 | Too Many Requests (rate limit exceeded) |
 | 500 | Internal Server Error |
 
 ### Error Response Format
 
+All errors return a structured JSON response:
+
 ```json
 {
-  "error": "Job not found",
-  "detail": "No job with ID: invalid-id",
-  "timestamp": "2026-01-29T12:00:00Z"
+  "error": "ERROR_CODE",
+  "message": "Human-readable description",
+  "details": {
+    "field": "additional context"
+  },
+  "timestamp": "2026-02-02T08:50:00Z"
 }
 ```
+
+### Error Codes
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `INVALID_API_KEY` | 401 | Missing or invalid API key |
+| `RATE_LIMIT_EXCEEDED` | 429 | Too many requests |
+| `VALIDATION_ERROR` | 422 | Invalid input data |
+| `PATH_TRAVERSAL` | 400 | Directory traversal detected |
+| `FILE_SIZE_LIMIT` | 400 | File exceeds size limit |
+| `JOB_NOT_FOUND` | 404 | Job ID not found |
+| `AGENT_NOT_FOUND` | 404 | Agent name not found |
+| `LLM_ERROR` | 500 | LLM provider error |
+| `PIPELINE_ERROR` | 500 | Pipeline execution error |
 
 ### Python Exceptions
 
@@ -474,16 +546,29 @@ from agentds.core.exceptions import (
     AgentError,
     LLMError,
     ValidationError,
+    AuthenticationError,
+    RateLimitError,
 )
 
 try:
     result = pipeline.run(...)
+except ValidationError as e:
+    print(f"Invalid input: {e.message}")
+    print(f"Field: {e.details.get('field')}")
+except AuthenticationError as e:
+    print(f"Auth failed: {e.code}")
+except RateLimitError as e:
+    print(f"Rate limited, retry after: {e.retry_after}s")
 except PipelineError as e:
     print(f"Pipeline failed: {e}")
 except AgentError as e:
-    print(f"Agent {e.agent_name} failed: {e}")
+    print(f"Agent {e.details.get('agent_name')} failed: {e}")
 except LLMError as e:
     print(f"LLM call failed: {e}")
+except AgentDSError as e:
+    # Catch-all for any AgentDS error
+    print(f"Error [{e.code}]: {e.message}")
+    print(f"Details: {e.to_dict()}")
 ```
 
 ---

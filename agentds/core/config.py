@@ -126,6 +126,85 @@ class MLflowSettings(BaseSettings):
     artifact_location: str | None = Field(default=None)
 
 
+class APOSettings(BaseSettings):
+    """
+    APO (Automatic Prompt Optimization) settings.
+
+    Controls the behavior of the OptimizationAgent's prompt improvement cycle.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APO_",
+        extra="ignore",
+    )
+
+    # Core settings
+    enabled: bool = Field(default=True, description="Enable APO optimization")
+    gradient_model: str = Field(
+        default="gpt-4o",
+        description="Model for generating critiques (textual gradients)",
+    )
+    edit_model: str = Field(
+        default="gpt-4o-mini",
+        description="Model for rewriting prompts based on critique",
+    )
+
+    # Optimization parameters
+    num_rounds: int = Field(
+        default=5, ge=1, le=20, description="Number of optimization iterations"
+    )
+    beam_width: int = Field(
+        default=3, ge=1, le=10, description="Number of parallel prompt candidates"
+    )
+    temperature: float = Field(
+        default=0.2, ge=0.0, le=1.0, description="Temperature for creative rewrites"
+    )
+
+    # Quality thresholds
+    reward_threshold: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Minimum reward score to accept optimization",
+    )
+    min_improvement: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        description="Minimum improvement required to adopt new prompt",
+    )
+
+    # Fallback behavior
+    use_agent_lightning: bool = Field(
+        default=True,
+        description="Use Agent Lightning library if available",
+    )
+    fallback_enabled: bool = Field(
+        default=True,
+        description="Use native APO if Agent Lightning unavailable",
+    )
+
+    # History and versioning
+    history_size: int = Field(
+        default=10, ge=1, le=100, description="Prompt versions to keep per agent"
+    )
+    auto_rollback: bool = Field(
+        default=True,
+        description="Automatically rollback if new prompt performs worse",
+    )
+
+    # A/B Testing
+    ab_testing_enabled: bool = Field(
+        default=False, description="Enable A/B testing for prompts"
+    )
+    ab_test_sample_size: int = Field(
+        default=100, ge=10, description="Sample size for A/B tests"
+    )
+    ab_test_confidence: float = Field(
+        default=0.95, ge=0.8, le=0.99, description="Confidence level for A/B tests"
+    )
+
+
 class Settings(BaseSettings):
     """Main application settings."""
 
@@ -172,6 +251,7 @@ class Settings(BaseSettings):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     mlflow: MLflowSettings = Field(default_factory=MLflowSettings)
+    apo: APOSettings = Field(default_factory=APOSettings)
 
     # Configuration files
     llm_config_path: Path = Field(default=Path("config/llm_config.yaml"))

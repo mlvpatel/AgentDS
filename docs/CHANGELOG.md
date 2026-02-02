@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Custom Exception Hierarchy** (`agentds/core/exceptions.py`)
+  - 25+ exception classes for structured error handling
+  - `AgentDSError` base class with `to_dict()` for API responses
+  - Specific exceptions: `LLMError`, `ValidationError`, `AuthenticationError`, `RateLimitError`
+
+- **Input Validation Utilities** (`agentds/core/validation.py`)
+  - Path sanitization to prevent directory traversal attacks
+  - File size limits (100MB default)
+  - Content-type and file extension validation
+  - URL validation blocking localhost and private IPs
+  - SQL query safety checks (SELECT only)
+
+- **API Security Middleware** (`agentds/web/api/middleware.py`)
+  - API key authentication via `X-API-Key` header
+  - Token bucket rate limiting (60 req/min default)
+  - Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`)
+  - Exempt paths for `/api/health` and `/api/docs`
+
+- **Secrets Management Guide** (`docs/SECRETS.md`)
+  - HashiCorp Vault integration examples
+  - AWS Secrets Manager, GCP Secret Manager, Azure Key Vault
+  - Kubernetes Secrets and External Secrets Operator
+  - Secret rotation best practices
+
+- **Enhanced APO (Automatic Prompt Optimization)** (`agentds/core/apo.py`)
+  - `APOSettings` - Configurable settings (15+ parameters)
+  - `APOOptimizer` - Native implementation of Evaluate-Critique-Rewrite cycle
+  - `BeamSearch` - Maintains top-k prompt candidates with pruning
+  - `PromptHistory` - Version control with rollback support
+  - `RewardAggregator` - Combines multiple reward signals
+  - A/B testing support for prompt validation
+  - Falls back to native when Agent Lightning unavailable
+
+- **APO Configuration** (`agentds/core/config.py`)
+  - `APOSettings` class with environment variable support
+  - Configurable gradient/edit models, num_rounds, beam_width
+  - A/B testing parameters
+
+- **APO Documentation** (`docs/APO_GUIDE.md`)
+  - Complete guide to APO methodology
+  - Configuration reference
+  - Usage examples
+
+### Improved
+
+- **API Reference** - Added authentication and rate limiting documentation
+- **Architecture Docs** - Added API security middleware diagrams
+- **Test Coverage** - New tests for exceptions, validation, API, and APO
+
+---
+
 ## [1.0.0] - 2026-01-29
 
 ### Added
