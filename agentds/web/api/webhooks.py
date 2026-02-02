@@ -413,7 +413,7 @@ async def get_job(job_id: str) -> dict[str, Any]:
     return job.model_dump()
 
 
-@delete("/jobs/{job_id:str}")
+@delete("/jobs/{job_id:str}", status_code=200)
 async def delete_job(job_id: str) -> dict[str, str]:
     """Delete a job."""
     settings, job_queue = get_dependencies()
