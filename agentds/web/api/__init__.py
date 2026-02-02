@@ -6,7 +6,7 @@ REST API endpoints for external integrations.
 Author: Malav Patel
 """
 
-from agentds.web.api.middleware import (
+from agentds.web.api.middleware import (  # noqa: I001
     AuthenticationMiddleware,
     RateLimitMiddleware,
     RateLimiter,

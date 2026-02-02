@@ -6,7 +6,7 @@ Tests for API endpoints and middleware.
 Author: Malav Patel
 """
 
-import pytest
+import pytest  # noqa: I001
 from litestar.testing import TestClient
 
 from agentds.core.config import Settings
