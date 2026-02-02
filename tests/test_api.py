@@ -10,8 +10,8 @@ import pytest
 from litestar.testing import TestClient
 
 from agentds.core.config import Settings
-from agentds.web.api.middleware import APIKeyAuthenticator, RateLimiter, TokenBucket
 from agentds.web.api.webhooks import create_api
+from agentds.web.api.middleware import APIKeyAuthenticator, RateLimiter, TokenBucket
 
 
 # =============================================================================
@@ -288,7 +288,7 @@ class TestAPIRateLimiting:
         """Test rate limit exceeded response."""
         # Make requests until rate limited
         # Note: burst_size is 2x rate, so need to exceed that
-        for i in range(20):
+        for _ in range(20):
             response = rate_limited_client.get("/api/health")
             if response.status_code == 429:
                 # Rate limited

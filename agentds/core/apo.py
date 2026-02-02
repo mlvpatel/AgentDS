@@ -351,12 +351,11 @@ class APOOptimizer:
             # Add new candidates to beam (automatically prunes)
             self.beam.add_all(new_candidates)
 
-            # Early stopping if no improvement
+            # Early stopping if no improvement (give at least 2 rounds)
             best = self.beam.get_best()
-            if best and best.score <= original.score + self.min_improvement:
-                if round_num > 2:  # Give at least 2 rounds
-                    logger.info(f"Early stopping at round {round_num} - no improvement")
-                    break
+            if best and best.score <= original.score + self.min_improvement and round_num > 2:
+                logger.info(f"Early stopping at round {round_num} - no improvement")
+                break
 
         # Get final result
         best = self.beam.get_best()
@@ -498,11 +497,12 @@ def create_apo_optimizer(
     # Try Agent Lightning first if enabled
     if apo_settings.use_agent_lightning:
         try:
-            import agentlightning as agl
+            import agentlightning as _agl  # noqa: F401
 
             logger.info("Using Agent Lightning for APO")
             # Return Agent Lightning wrapper (to be implemented)
             # For now, fall through to native implementation
+            _ = _agl  # Placeholder for future implementation
         except ImportError:
             if not apo_settings.fallback_enabled:
                 logger.warning("Agent Lightning not available and fallback disabled")

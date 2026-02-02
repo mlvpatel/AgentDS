@@ -9,7 +9,6 @@ Author: Malav Patel
 from __future__ import annotations
 
 import time
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -21,7 +20,7 @@ from litestar.middleware import AbstractMiddleware
 from litestar.types import ASGIApp, Receive, Scope, Send
 
 from agentds.core.config import Settings, get_settings
-from agentds.core.exceptions import InvalidAPIKeyError, RateLimitError
+from agentds.core.exceptions import InvalidAPIKeyError
 from agentds.core.logger import get_logger
 
 logger = get_logger(__name__)

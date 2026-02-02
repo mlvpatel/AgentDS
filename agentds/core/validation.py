@@ -8,7 +8,6 @@ Author: Malav Patel
 
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -129,7 +128,7 @@ def sanitize_path(
                 path=str(resolved)[:100],
                 base_dir=str(base_resolved),
             )
-            raise PathTraversalError(path_str)
+            raise PathTraversalError(path_str) from None
 
     # Check if absolute paths are allowed
     if not allow_absolute and path_obj.is_absolute():
@@ -306,10 +305,7 @@ def _is_private_ip(hostname: str) -> bool:
         if parts[0] == 192 and parts[1] == 168:
             return True
         # 169.254.0.0/16 (link-local)
-        if parts[0] == 169 and parts[1] == 254:
-            return True
-
-        return False
+        return bool(parts[0] == 169 and parts[1] == 254)
     except (socket.gaierror, ValueError, IndexError):
         # Can't resolve or parse - not a private IP
         return False
