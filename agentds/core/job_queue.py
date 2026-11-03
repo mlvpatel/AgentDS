@@ -305,6 +305,7 @@ class JobQueue:
         args: list[Any] | None = None,
         kwargs: dict[str, Any] | None = None,
         priority: JobPriority = JobPriority.NORMAL,
+        job_id: str | None = None,
     ) -> Job:
         """
         Create and enqueue a new job.
@@ -315,6 +316,7 @@ class JobQueue:
             args: Positional arguments
             kwargs: Keyword arguments
             priority: Job priority
+            job_id: Use this id instead of generating one
 
         Returns:
             Created Job instance
@@ -325,6 +327,7 @@ class JobQueue:
             args=args or [],
             kwargs=kwargs or {},
             priority=priority,
+            **({"id": job_id} if job_id else {}),
         )
         self._backend.enqueue(job)
         logger.info("Job created", job_id=job.id, name=name, task=task)

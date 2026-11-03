@@ -46,9 +46,11 @@ class PipelineStartResponse(BaseModel):
     """Response from pipeline start."""
 
     job_id: str
-    status: str
+    status: str  # completed, failed, cancelled or awaiting_approval
     message: str
     created_at: str
+    current_agent: str | None = None
+    error: str | None = None
 
 
 class PipelineStatusResponse(BaseModel):
@@ -167,8 +169,9 @@ async def start_pipeline(data: PipelineStartRequest) -> PipelineStartResponse:
             human_in_loop=data.human_in_loop,
         )
 
-        # Create and run pipeline
-        pipeline = AgentDSPipeline(config=config, settings=settings)
+        # Create and run pipeline. Share the API's job queue so the job is
+        # visible to /pipeline/status and /jobs under the returned job_id.
+        pipeline = AgentDSPipeline(config=config, settings=settings, job_queue=job_queue)
         job_id = str(uuid.uuid4())
 
         result = pipeline.run(
@@ -178,17 +181,17 @@ async def start_pipeline(data: PipelineStartRequest) -> PipelineStartResponse:
             job_id=job_id,
         )
 
-        # Store pipeline reference
-        _active_pipelines[job_id] = {
-            "pipeline": pipeline,
-            "result": result,
-        }
+        # Keep the pipeline only while it waits for a review action
+        if result["status"] == "awaiting_approval":
+            _active_pipelines[job_id] = {"pipeline": pipeline}
 
         return PipelineStartResponse(
             job_id=job_id,
-            status="started",
-            message="Pipeline started successfully",
+            status=result["status"],
+            message=_status_message(result),
             created_at=datetime.now(timezone.utc).isoformat(),
+            current_agent=result["current_agent"],
+            error=result["error"],
         )
 
     except Exception as e:
@@ -249,8 +252,20 @@ async def cancel_pipeline(job_id: str) -> dict[str, str]:
     )
 
 
+def _status_message(result: dict[str, Any]) -> str:
+    """Human-readable summary of a pipeline run or resume result."""
+    status = result["status"]
+    if status == "awaiting_approval":
+        return f"Waiting for review of {result['current_agent']}"
+    if status == "completed":
+        return "Pipeline completed"
+    if status == "cancelled":
+        return "Pipeline stopped by user"
+    return f"Pipeline failed: {result.get('error') or 'unknown error'}"
+
+
 @post("/pipeline/action/{job_id:str}")
-async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, str]:
+async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, Any]:
     """Handle human-in-the-loop action."""
     settings, job_queue = get_dependencies()
 
@@ -282,19 +297,23 @@ async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, str]:
     pipeline = pipeline_data["pipeline"]
 
     try:
-        pipeline.resume(
+        result = pipeline.resume(
             job_id=job_id,
             user_action=action.value,
             user_feedback=data.feedback,
         )
-
-        return {
-            "status": "success",
-            "action": action.value,
-            "job_id": job_id,
-        }
-
+    except ValueError as e:
+        # Not a review action, or the pipeline is not waiting for review
+        return Response(
+            content=ErrorResponse(
+                error="Action not allowed",
+                detail=str(e),
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            ).model_dump(),
+            status_code=409,
+        )
     except Exception as e:
+        _active_pipelines.pop(job_id, None)
         return Response(
             content=ErrorResponse(
                 error="Action failed",
@@ -303,6 +322,19 @@ async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, str]:
             ).model_dump(),
             status_code=500,
         )
+
+    if result["status"] != "awaiting_approval":
+        _active_pipelines.pop(job_id, None)
+
+    return {
+        "status": "success",
+        "action": action.value,
+        "job_id": job_id,
+        "pipeline_status": result["status"],
+        "current_agent": result["current_agent"],
+        "message": _status_message(result),
+        "error": result["error"],
+    }
 
 
 @post("/agent/run")

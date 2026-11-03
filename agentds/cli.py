@@ -107,14 +107,62 @@ def run(
             task_description=task,
             output_destination=output,
         )
+        while result["status"] == "awaiting_approval":
+            action, feedback = _prompt_review(result)
+            result = pipeline.resume(result["job_id"], action, feedback)
 
-        click.echo("[OK] Pipeline completed successfully!")
-        click.echo(f"[INFO] Job ID: {result['job_id']}")
-        click.echo(f"[INFO] Outputs: {output}")
-
+    except click.Abort:
+        click.echo(
+            "\n[ERROR] Review cancelled before the pipeline finished. "
+            "Use --no-hitl to run without review.",
+            err=True,
+        )
+        sys.exit(1)
     except Exception as e:
         click.echo(f"[ERROR] Pipeline failed: {e}", err=True)
         sys.exit(1)
+
+    click.echo(f"[INFO] Job ID: {result['job_id']}")
+    if result["status"] == "completed":
+        click.echo("[OK] Pipeline completed successfully!")
+        click.echo(f"[INFO] Outputs: {output}")
+    elif result["status"] == "cancelled":
+        click.echo("[WARN] Pipeline stopped by user")
+        sys.exit(1)
+    else:
+        click.echo(f"[ERROR] Pipeline failed: {result['error'] or 'unknown error'}", err=True)
+        sys.exit(1)
+
+
+# Review choices shown in the terminal, mapped to pipeline actions.
+_REVIEW_CHOICES = {
+    "approve": "approve_and_continue",
+    "rerun": "rerun",
+    "feedback": "rerun_with_feedback",
+    "skip": "skip",
+    "stop": "stop_pipeline",
+}
+
+
+def _prompt_review(result: dict) -> tuple[str, str | None]:
+    """Show the paused agent's result and ask the user what to do next."""
+    agent_name = result["current_agent"]
+    agent_result = result["state"].get("agent_results", {}).get(agent_name, {})
+
+    click.echo("")
+    click.echo(f"[REVIEW] {agent_name} finished with status: {agent_result.get('status', 'unknown')}")
+    if agent_result.get("error"):
+        click.echo(f"[REVIEW] Error: {agent_result['error']}")
+    if agent_result.get("approval_message"):
+        click.echo(agent_result["approval_message"])
+
+    choice = click.prompt(
+        "Next step (approve, rerun, feedback = rerun with feedback, skip, stop)",
+        type=click.Choice(list(_REVIEW_CHOICES)),
+        default="approve",
+    )
+    feedback = click.prompt("Feedback for the agent") if choice == "feedback" else None
+    return _REVIEW_CHOICES[choice], feedback
 
 
 @cli.command()
