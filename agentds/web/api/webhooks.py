@@ -14,6 +14,7 @@ from typing import Any
 
 from litestar import Litestar, Router, delete, get, post
 from litestar.config.cors import CORSConfig
+from litestar.middleware import DefineMiddleware
 from litestar.openapi import OpenAPIConfig
 from litestar.response import Response
 from pydantic import BaseModel, Field
@@ -507,8 +508,8 @@ def create_api(settings: Settings | None = None) -> Litestar:
             description="REST API for AgentDS multi-agent data science pipeline",
         ),
         middleware=[
-            AuthenticationMiddleware,
-            RateLimitMiddleware,
+            DefineMiddleware(AuthenticationMiddleware, settings=settings),
+            DefineMiddleware(RateLimitMiddleware, settings=settings),
         ],
     )
 
