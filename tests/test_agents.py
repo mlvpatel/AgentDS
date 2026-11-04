@@ -310,7 +310,8 @@ class TestAPIWrapperAgent:
         task_type: str,
         prediction: float,
         requests: list[tuple[str, dict]],
-    ) -> tuple[list, list[list[str]]]:
+        categorical: tuple[str, ...] = (),
+    ) -> tuple[list, list[list[str]], list[dict]]:
         """Generate app.py, import it, and send requests to it with a stub model."""
         import importlib.util
         import sys
@@ -318,7 +319,7 @@ class TestAPIWrapperAgent:
         from litestar.testing import TestClient
 
         agent = APIWrapperAgent(settings=mock_settings)
-        code = agent._generate_api_code({}, features, task_type)
+        code = agent._generate_api_code({}, features, task_type, categorical_features=categorical)
 
         app_file = tmp_path / "generated_app.py"
         app_file.write_text(code)
@@ -329,9 +330,11 @@ class TestAPIWrapperAgent:
         class StubModel:
             def __init__(self) -> None:
                 self.columns: list[list[str]] = []
+                self.rows: list[dict] = []
 
             def predict(self, frame):
                 self.columns.append(list(frame.columns))
+                self.rows.append(frame.iloc[0].to_dict())
                 return [prediction]
 
         stub = StubModel()
@@ -342,7 +345,7 @@ class TestAPIWrapperAgent:
                 responses = [client.post(path, json=body) for path, body in requests]
         finally:
             sys.modules.pop("generated_app", None)
-        return responses, stub.columns
+        return responses, stub.columns, stub.rows
 
     @pytest.mark.parametrize(
         ("task_type", "expected"),
@@ -356,7 +359,7 @@ class TestAPIWrapperAgent:
         expected: float,
     ):
         """The generated app.py imports, and its endpoints build input from the request."""
-        (single, batch), columns = self._serve_generated_api(
+        (single, batch), columns, _rows = self._serve_generated_api(
             mock_settings,
             tmp_path,
             ["tenure", "monthly_charges"],
@@ -392,7 +395,7 @@ class TestAPIWrapperAgent:
         ]
         body = {name: float(i) for i, name in enumerate(features)}
 
-        (single, batch), columns = self._serve_generated_api(
+        (single, batch), columns, _rows = self._serve_generated_api(
             mock_settings,
             tmp_path,
             features,
@@ -423,6 +426,69 @@ class TestAPIWrapperAgent:
             assert not name.startswith("_"), name
             assert not name.startswith("model_"), name
             assert not hasattr(BaseModel, name), name
+
+    def test_generated_api_accepts_categorical_values(
+        self, mock_settings: Settings, tmp_path: Path
+    ):
+        """Categorical columns take string values; numeric columns stay floats."""
+        body = {"tenure": 3, "plan type": "gold"}
+
+        (single, batch), _columns, rows = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            ["tenure", "plan type"],
+            "classification",
+            1,
+            [("/predict", body), ("/predict/batch", {"instances": [body]})],
+            categorical=("plan type",),
+        )
+
+        assert single.status_code == 201, single.text
+        assert batch.status_code == 201, batch.text
+        assert rows == [{"tenure": 3.0, "plan type": "gold"}] * 2
+
+    def test_execute_types_columns_from_feature_plan(
+        self,
+        agent_context: AgentContext,
+        mock_settings: Settings,
+        mock_llm_gateway: MagicMock,
+        mock_artifact_store: ArtifactStore,
+    ):
+        """The agent reads column types from FeatureEngineerAgent's plan."""
+        agent_context.previous_results = {
+            "AutoMLAgent": AgentResult(
+                agent_name="AutoMLAgent",
+                status=AgentStatus.COMPLETED,
+                outputs={"task_type": "classification"},
+            ),
+            "FeatureEngineerAgent": AgentResult(
+                agent_name="FeatureEngineerAgent",
+                status=AgentStatus.COMPLETED,
+                outputs={
+                    "target_column": "churned",
+                    "feature_plan": {
+                        # Plans can list the target; it must not become an API input
+                        "numeric_features": {"columns": ["tenure", "churned"]},
+                        "categorical_features": {"columns": ["plan"]},
+                    },
+                },
+            ),
+        }
+        agent = APIWrapperAgent(
+            settings=mock_settings, llm_gateway=mock_llm_gateway, artifact_store=mock_artifact_store
+        )
+
+        result = agent.execute(agent_context)
+
+        assert result.status == AgentStatus.COMPLETED, result.error
+        code = mock_artifact_store.load_text(result.outputs["api_code_artifact_id"])
+        assert "    tenure: float = Field(..., alias='tenure'" in code
+        assert "    plan: str = Field(..., alias='plan'" in code
+        assert "alias='churned'" not in code
+        schema = result.outputs["api_config"]["input_schema"]
+        assert schema["tenure"]["type"] == "float"
+        assert schema["plan"]["type"] == "string"
+        assert "churned" not in schema
 
 
 # =============================================================================
