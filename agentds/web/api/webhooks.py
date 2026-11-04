@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -134,12 +135,49 @@ def get_dependencies() -> tuple[Settings, JobQueue]:
 
 # ==================== API Endpoints ====================
 
-# LLM reachability is checked in the background and cached. The check is a
-# real (billed) completion that can take minutes while a provider is slow, so
-# it must run neither on the event loop nor once per health probe.
+# Health checks of dependencies run in the background and are cached, so a
+# slow or hanging dependency never delays a probe. The LLM check is a real
+# (billed) completion that can take minutes while a provider is slow; the
+# job queue check is a Redis PING.
 LLM_HEALTH_TTL_SECONDS = 300.0
-_llm_health: dict[str, Any] = {"ok": None, "checked_at": None}
-_llm_health_task: asyncio.Task[None] | None = None
+JOB_QUEUE_HEALTH_TTL_SECONDS = 10.0
+
+
+class BackgroundCheck:
+    """
+    A dependency check run in a worker thread, at most one at a time.
+
+    ``status()`` returns the last result immediately (None before the first
+    check finishes) and starts a new check when the result is older than
+    ``ttl_seconds``.
+    """
+
+    def __init__(self, name: str, check: Callable[[], bool], ttl_seconds: float) -> None:
+        self.name = name
+        self.check = check
+        self.ttl_seconds = ttl_seconds
+        self.ok: bool | None = None
+        self.checked_at: float | None = None
+        self._task: asyncio.Task[None] | None = None
+
+    def status(self) -> bool | None:
+        stale = self.checked_at is None or time.monotonic() - self.checked_at > self.ttl_seconds
+        if stale and (self._task is None or self._task.done()):
+            # Keep a reference so the task isn't garbage-collected mid-check
+            self._task = asyncio.create_task(self._refresh())
+        return self.ok
+
+    async def _refresh(self) -> None:
+        try:
+            ok = await to_thread.run_sync(self.check)
+        except Exception as e:
+            logger.warning("Health check failed", check=self.name, error=str(e))
+            ok = False
+        self.ok = bool(ok)
+        self.checked_at = time.monotonic()
+
+
+_health_checks: dict[str, BackgroundCheck] = {}
 
 
 def _check_llm(settings: Settings) -> bool:
@@ -153,41 +191,37 @@ def _check_llm(settings: Settings) -> bool:
         return False
 
 
-async def _refresh_llm_health(settings: Settings) -> None:
-    ok = await to_thread.run_sync(_check_llm, settings)
-    _llm_health.update(ok=ok, checked_at=time.monotonic())
+def _check_job_queue(job_queue: JobQueue) -> bool:
+    """Blocking check that the job queue backend answers (a Redis PING)."""
+    return job_queue.ping()
 
 
-def _llm_health_status(settings: Settings) -> bool | None:
-    """
-    Last known LLM reachability, or None before the first check finishes.
-
-    Starts a background refresh when the result is older than
-    LLM_HEALTH_TTL_SECONDS and no check is already running.
-    """
-    global _llm_health_task
-    checked_at = _llm_health["checked_at"]
-    stale = checked_at is None or time.monotonic() - checked_at > LLM_HEALTH_TTL_SECONDS
-    if stale and (_llm_health_task is None or _llm_health_task.done()):
-        # Keep a reference so the task isn't garbage-collected mid-check
-        _llm_health_task = asyncio.create_task(_refresh_llm_health(settings))
-    return _llm_health["ok"]
+def _get_health_checks(settings: Settings, job_queue: JobQueue) -> dict[str, BackgroundCheck]:
+    if not _health_checks:
+        _health_checks["llm"] = BackgroundCheck(
+            "llm", lambda: _check_llm(settings), LLM_HEALTH_TTL_SECONDS
+        )
+        _health_checks["job_queue"] = BackgroundCheck(
+            "job_queue", lambda: _check_job_queue(job_queue), JOB_QUEUE_HEALTH_TTL_SECONDS
+        )
+    return _health_checks
 
 
 @get("/health")
 async def health_check() -> HealthResponse:
     """Health check endpoint.
 
-    Returns immediately. The LLM component reports the last background check
-    (refreshed every LLM_HEALTH_TTL_SECONDS) and is false until the first
-    check has confirmed the provider answers.
+    Returns immediately. ``job_queue`` and ``llm`` report the last background
+    check of each dependency (refreshed every JOB_QUEUE_HEALTH_TTL_SECONDS and
+    LLM_HEALTH_TTL_SECONDS) and are false until a first check has passed.
     """
     settings, job_queue = get_dependencies()
+    checks = _get_health_checks(settings, job_queue)
 
     components = {
         "api": True,
-        "job_queue": True,
-        "llm": bool(_llm_health_status(settings)),
+        "job_queue": bool(checks["job_queue"].status()),
+        "llm": bool(checks["llm"].status()),
     }
 
     return HealthResponse(

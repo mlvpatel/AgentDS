@@ -195,17 +195,23 @@ class InMemoryQueue:
 class RedisQueue:
     """Redis Queue (RQ) based job queue."""
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, socket_timeout: float | None = None) -> None:
         """
         Initialize Redis queue.
 
         Args:
             url: Redis connection URL
+            socket_timeout: Seconds to wait when connecting to or reading from
+                Redis; None waits indefinitely
         """
         import redis
         from rq import Queue
 
-        self._connection = redis.from_url(url)
+        self._connection = redis.from_url(
+            url,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_timeout,
+        )
         self._queue = Queue(connection=self._connection)
         self._jobs_key = "agentds:jobs"
 
@@ -303,7 +309,10 @@ class JobQueue:
         """Initialize appropriate queue backend."""
         if self.settings.is_feature_enabled("redis_queue"):
             try:
-                redis_queue = RedisQueue(self.settings.redis.url)
+                redis_queue = RedisQueue(
+                    self.settings.redis.url,
+                    socket_timeout=self.settings.redis.socket_timeout,
+                )
                 if redis_queue.ping():
                     self._backend = redis_queue
                     logger.info("Using Redis job queue backend")
@@ -358,6 +367,17 @@ class JobQueue:
     def update_job(self, job: Job) -> bool:
         """Update job."""
         return self._backend.update_job(job)
+
+    def ping(self) -> bool:
+        """
+        Check the backend can be reached.
+
+        Pings Redis for the Redis backend. The in-memory backend lives in this
+        process, so it is always reachable.
+        """
+        if isinstance(self._backend, RedisQueue):
+            return self._backend.ping()
+        return True
 
     def submit(self, func: Callable[..., Any], *args: Any, job_timeout: int) -> bool:
         """

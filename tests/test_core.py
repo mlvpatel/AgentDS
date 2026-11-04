@@ -179,6 +179,23 @@ class TestJobQueue:
         for module in ("redis", "rq"):
             assert importlib.util.find_spec(module) is not None, f"{module} is not installed"
 
+    def test_redis_connection_uses_configured_socket_timeout(self):
+        """A hung Redis can't stall a ping or job operation forever."""
+        from agentds.core.job_queue import RedisQueue
+
+        redis_queue = RedisQueue("redis://localhost:6399/0", socket_timeout=2)  # no I/O here
+        kwargs = redis_queue._connection.connection_pool.connection_kwargs
+
+        assert kwargs["socket_timeout"] == 2
+        assert kwargs["socket_connect_timeout"] == 2
+
+    def test_in_memory_queue_ping_is_true(self):
+        from agentds.core.job_queue import InMemoryQueue, JobQueue
+
+        queue = JobQueue.__new__(JobQueue)
+        queue._backend = InMemoryQueue()
+        assert queue.ping() is True
+
 
 class TestPackaging:
     """Packages the code imports directly must be declared, not arrive transitively."""

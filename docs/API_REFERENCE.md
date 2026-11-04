@@ -92,10 +92,15 @@ GET /api/health
 ```
 
 The endpoint answers immediately and is safe to use for liveness and readiness
-probes. `llm` reports the result of a background check that calls the default
-model at most once every 5 minutes, and only one check runs at a time. It is
-`false` (and `status` is `degraded`) until the first check has confirmed the
-provider answers.
+probes. `job_queue` and `llm` report background checks, each run one at a time
+and reused until it is refreshed:
+
+- `job_queue`: a Redis `PING`, refreshed every 10 seconds, when the Redis job
+  queue is in use. With the in-memory fallback it is always `true`.
+- `llm`: a call to the default model, refreshed every 5 minutes.
+
+Each is `false` (and `status` is `degraded`) until its first check has passed,
+and while the last check failed.
 
 ---
 
