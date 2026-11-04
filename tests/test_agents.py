@@ -302,6 +302,48 @@ class TestAPIWrapperAgent:
         prompt = agent.get_system_prompt()
         assert "APIWrapperAgent" in prompt
 
+    @staticmethod
+    def _serve_generated_api(
+        mock_settings: Settings,
+        tmp_path: Path,
+        features: list[str],
+        task_type: str,
+        prediction: float,
+        requests: list[tuple[str, dict]],
+    ) -> tuple[list, list[list[str]]]:
+        """Generate app.py, import it, and send requests to it with a stub model."""
+        import importlib.util
+        import sys
+
+        from litestar.testing import TestClient
+
+        agent = APIWrapperAgent(settings=mock_settings)
+        code = agent._generate_api_code({}, features, task_type)
+
+        app_file = tmp_path / "generated_app.py"
+        app_file.write_text(code)
+        spec = importlib.util.spec_from_file_location("generated_app", app_file)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["generated_app"] = module
+
+        class StubModel:
+            def __init__(self) -> None:
+                self.columns: list[list[str]] = []
+
+            def predict(self, frame):
+                self.columns.append(list(frame.columns))
+                return [prediction]
+
+        stub = StubModel()
+        try:
+            spec.loader.exec_module(module)
+            module._model = stub
+            with TestClient(app=module.app) as client:
+                responses = [client.post(path, json=body) for path, body in requests]
+        finally:
+            sys.modules.pop("generated_app", None)
+        return responses, stub.columns
+
     @pytest.mark.parametrize(
         ("task_type", "expected"),
         [("classification", 1), ("regression", 1.5)],
@@ -314,47 +356,73 @@ class TestAPIWrapperAgent:
         expected: float,
     ):
         """The generated app.py imports, and its endpoints build input from the request."""
-        import importlib.util
-        import sys
-
-        from litestar.testing import TestClient
-
-        agent = APIWrapperAgent(settings=mock_settings)
-        code = agent._generate_api_code({}, ["tenure", "monthly_charges"], task_type)
-
-        app_file = tmp_path / "generated_app.py"
-        app_file.write_text(code)
-        spec = importlib.util.spec_from_file_location("generated_app", app_file)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["generated_app"] = module
-        try:
-            spec.loader.exec_module(module)
-
-            class StubModel:
-                def __init__(self) -> None:
-                    self.columns: list[list[str]] = []
-
-                def predict(self, features):
-                    self.columns.append(list(features.columns))
-                    return [expected]
-
-            stub = StubModel()
-            module._model = stub
-
-            with TestClient(app=module.app) as client:
-                single = client.post("/predict", json={"tenure": 3, "monthly_charges": 20.5})
-                batch = client.post(
-                    "/predict/batch",
-                    json={"instances": [{"tenure": 1, "monthly_charges": 9.0}]},
-                )
-        finally:
-            sys.modules.pop("generated_app", None)
+        (single, batch), columns = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            ["tenure", "monthly_charges"],
+            task_type,
+            expected,
+            [
+                ("/predict", {"tenure": 3, "monthly_charges": 20.5}),
+                ("/predict/batch", {"instances": [{"tenure": 1, "monthly_charges": 9.0}]}),
+            ],
+        )
 
         assert single.status_code == 201, single.text
         assert single.json()["prediction"] == expected
         assert batch.status_code == 201, batch.text
         assert batch.json()["predictions"][0]["prediction"] == expected
-        assert stub.columns == [["tenure", "monthly_charges"]] * 2
+        assert columns == [["tenure", "monthly_charges"]] * 2
+
+    def test_generated_api_handles_awkward_column_names(
+        self, mock_settings: Settings, tmp_path: Path
+    ):
+        """Any column name yields valid code, and the model sees the original names."""
+        features = [
+            "Annual Income (k$)",
+            "2019_sales",
+            "class",
+            'say "hi" \\ there',
+            "a b",
+            "a-b",
+            "_id",
+            "json",
+            "model_type",
+            "naïve score",
+        ]
+        body = {name: float(i) for i, name in enumerate(features)}
+
+        (single, batch), columns = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            features,
+            "regression",
+            2.0,
+            [("/predict", body), ("/predict/batch", {"instances": [body]})],
+        )
+
+        assert single.status_code == 201, single.text
+        assert batch.status_code == 201, batch.text
+        # Every feature reached the model under its original name, in order:
+        # nothing collided, was dropped, or was renamed.
+        assert columns == [features, features]
+
+    def test_generated_field_names_are_unique_identifiers(self, mock_settings: Settings):
+        """Generated field names are valid, distinct, and safe as Pydantic fields."""
+        import keyword
+
+        from pydantic import BaseModel
+
+        names = APIWrapperAgent._field_identifiers(
+            ["a b", "a-b", "a_b", "", "123", "for", "_x", "dict", "model_x", "x" * 3]
+        )
+
+        assert len(set(names)) == len(names)
+        for name in names:
+            assert name.isidentifier() and not keyword.iskeyword(name), name
+            assert not name.startswith("_"), name
+            assert not name.startswith("model_"), name
+            assert not hasattr(BaseModel, name), name
 
 
 # =============================================================================

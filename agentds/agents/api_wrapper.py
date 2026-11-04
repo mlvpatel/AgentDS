@@ -9,7 +9,11 @@ Author: Malav Patel
 from __future__ import annotations
 
 import json
+import keyword
+import re
 from typing import Any
+
+from pydantic import BaseModel
 
 from agentds.agents.base import (
     AgentContext,
@@ -204,6 +208,36 @@ Provide input/output schema and endpoint configuration as JSON.
             },
         }
 
+    @staticmethod
+    def _field_identifiers(column_names: list[str]) -> list[str]:
+        """
+        Turn column names into unique, safe Pydantic field names.
+
+        Column names can contain any characters, start with a digit, or be
+        Python keywords. Each one is mapped to an ASCII identifier that is not
+        a keyword, does not start with an underscore (Pydantic treats those as
+        private attributes), does not use Pydantic's ``model_`` prefix, and
+        does not shadow a BaseModel attribute. Duplicates get a numeric suffix.
+        """
+        used: set[str] = set()
+        identifiers = []
+        for name in column_names:
+            ident = re.sub(r"[^0-9A-Za-z_]", "_", str(name)).lstrip("_") or "feature"
+            if (
+                ident[0].isdigit()
+                or keyword.iskeyword(ident)
+                or ident.startswith("model_")
+                or hasattr(BaseModel, ident)
+            ):
+                ident = f"f_{ident}"
+            unique, suffix = ident, 2
+            while unique in used:
+                unique = f"{ident}_{suffix}"
+                suffix += 1
+            used.add(unique)
+            identifiers.append(unique)
+        return identifiers
+
     def _generate_api_code(
         self,
         config: dict[str, Any],
@@ -211,11 +245,16 @@ Provide input/output schema and endpoint configuration as JSON.
         task_type: str,
     ) -> str:
         """Generate Litestar API code."""
-        # Generate Pydantic model fields
-        input_fields = []
-        for name in feature_names[:50]:
-            safe_name = name.replace(" ", "_").replace("-", "_")
-            input_fields.append(f"    {safe_name}: float = Field(..., description=\"Feature {name}\")")
+        # Generate Pydantic model fields. Each field is aliased to its original
+        # column name, so requests use the real column names and the model
+        # receives a DataFrame with the columns it was trained on. Names are
+        # emitted with repr() so any characters produce a valid string literal.
+        columns = [str(name) for name in feature_names[:50]]
+        input_fields = [
+            f"    {ident}: float = Field(..., alias={column!r}, "
+            f"description={'Feature ' + column!r})"
+            for ident, column in zip(self._field_identifiers(columns), columns, strict=True)
+        ]
 
         input_fields_str = "\n".join(input_fields) if input_fields else "    value: float = Field(..., description=\"Input value\")"
 
@@ -240,7 +279,7 @@ from litestar import Litestar, get, post
 from litestar.config.cors import CORSConfig
 from litestar.openapi import OpenAPIConfig
 from litestar.status_codes import HTTP_200_OK, HTTP_500_INTERNAL_SERVER_ERROR
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # =============================================================================
@@ -248,7 +287,10 @@ from pydantic import BaseModel, Field
 # =============================================================================
 
 class PredictionInput(BaseModel):
-    """Input schema for prediction."""
+    """Input schema for prediction. Send features by their original column names."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
 {input_fields_str}
 
 
@@ -339,8 +381,8 @@ async def predict(data: PredictionInput) -> PredictionOutput:
     if model is None:
         raise ValueError("Model not loaded")
 
-    # Create a one-row DataFrame with the input field names as columns
-    features = pd.DataFrame([data.model_dump()])
+    # One-row DataFrame keyed by the original column names
+    features = pd.DataFrame([data.model_dump(by_alias=True)])
 
     # Apply preprocessing if available
     pipeline = get_pipeline()
@@ -377,8 +419,8 @@ async def predict_batch(data: BatchInput) -> BatchOutput:
 
     predictions = []
     for instance in data.instances:
-        # Create a one-row DataFrame for this instance
-        features = pd.DataFrame([instance.model_dump()])
+        # One-row DataFrame keyed by the original column names
+        features = pd.DataFrame([instance.model_dump(by_alias=True)])
 
         pipeline = get_pipeline()
         if pipeline is not None:
