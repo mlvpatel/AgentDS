@@ -311,6 +311,7 @@ class TestAPIWrapperAgent:
         prediction: float,
         requests: list[tuple[str, dict]],
         categorical: tuple[str, ...] = (),
+        pipeline: object | None = None,
     ) -> tuple[list, list[list[str]], list[dict]]:
         """Generate app.py, import it, and send requests to it with a stub model."""
         import importlib.util
@@ -341,6 +342,7 @@ class TestAPIWrapperAgent:
         try:
             spec.loader.exec_module(module)
             module._model = stub
+            module._pipeline = pipeline
             with TestClient(app=module.app) as client:
                 responses = [client.post(path, json=body) for path, body in requests]
         finally:
@@ -446,6 +448,45 @@ class TestAPIWrapperAgent:
         assert single.status_code == 201, single.text
         assert batch.status_code == 201, batch.text
         assert rows == [{"tenure": 3.0, "plan type": "gold"}] * 2
+
+    def test_generated_api_reports_preprocessing_errors(
+        self, mock_settings: Settings, tmp_path: Path
+    ):
+        """A failing pipeline returns 422; the model never sees unprocessed input."""
+
+        class StubPipeline:
+            def transform(self, frame):
+                if "platinum" in frame["plan"].tolist():
+                    raise ValueError("Found unknown categories ['platinum'] in column 1")
+                return frame.assign(transformed=True)
+
+        gold = {"tenure": 1, "plan": "gold"}
+        platinum = {"tenure": 2, "plan": "platinum"}
+
+        (ok, bad, bad_batch), columns, _rows = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            ["tenure", "plan"],
+            "classification",
+            1,
+            [
+                ("/predict", gold),
+                ("/predict", platinum),
+                ("/predict/batch", {"instances": [gold, platinum]}),
+            ],
+            categorical=("plan",),
+            pipeline=StubPipeline(),
+        )
+
+        assert ok.status_code == 201, ok.text
+        assert bad.status_code == 422, bad.text
+        assert "Preprocessing failed for input" in bad.json()["detail"]
+        assert "platinum" in bad.json()["detail"]
+        assert bad_batch.status_code == 422, bad_batch.text
+        assert "Preprocessing failed for instance 1" in bad_batch.json()["detail"]
+        # The model only ever received preprocessed rows: the good single
+        # request and the good first batch instance.
+        assert columns == [["tenure", "plan", "transformed"]] * 2
 
     def test_execute_types_columns_from_feature_plan(
         self,
