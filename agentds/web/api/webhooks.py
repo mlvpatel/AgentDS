@@ -21,7 +21,7 @@ from litestar.openapi import OpenAPIConfig
 from litestar.response import Response
 from pydantic import BaseModel, Field
 
-from agentds.agents import AgentAction
+from agentds.agents import AGENT_REGISTRY, AgentAction
 from agentds.core.config import Settings, get_settings
 from agentds.core.job_queue import JobQueue, JobStatus
 from agentds.core.logger import get_logger
@@ -419,15 +419,53 @@ async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, Any]:
     }
 
 
-@post("/agent/run")
-async def run_agent(data: AgentRunRequest) -> dict[str, Any]:
-    """Run a single agent independently."""
-    settings, job_queue = get_dependencies()
-
-    from agentds.agents import AGENT_REGISTRY
+def _run_single_agent(settings: Settings, data: AgentRunRequest, job_id: str) -> dict[str, Any]:
+    """Build and run one agent to completion. Blocking: call it from a worker thread."""
     from agentds.agents.base import AgentContext
     from agentds.core.artifact_store import ArtifactStore
     from agentds.core.llm_gateway import LLMGateway
+
+    # One gateway and store, shared by the agent and its context
+    llm_gateway = LLMGateway(settings)
+    artifact_store = ArtifactStore(settings)
+    agent = AGENT_REGISTRY[data.agent_name](  # type: ignore[abstract]
+        settings=settings,
+        llm_gateway=llm_gateway,
+        artifact_store=artifact_store,
+    )
+    context = AgentContext(
+        job_id=job_id,
+        settings=settings,
+        llm_gateway=llm_gateway,
+        artifact_store=artifact_store,
+        task_description=data.task_description,
+        extra={
+            "data_source": data.data_source,
+            **data.config,
+        },
+    )
+
+    result = agent.run(context)
+
+    return {
+        "job_id": job_id,
+        "agent": data.agent_name,
+        "status": result.status.value,
+        "outputs": result.outputs,
+        "artifacts": result.artifacts,
+        "duration_seconds": result.duration_seconds,
+        "error": result.error,
+    }
+
+
+@post("/agent/run")
+async def run_agent(data: AgentRunRequest) -> dict[str, Any]:
+    """Run a single agent independently.
+
+    The agent runs in a worker thread, so the API keeps serving other
+    requests (including health probes) while it works.
+    """
+    settings, job_queue = get_dependencies()
 
     if data.agent_name not in AGENT_REGISTRY:
         return Response(
@@ -440,36 +478,7 @@ async def run_agent(data: AgentRunRequest) -> dict[str, Any]:
         )
 
     try:
-        # Create agent
-        agent_class = AGENT_REGISTRY[data.agent_name]
-        agent = agent_class(settings=settings)  # type: ignore[abstract]
-
-        # Create context
-        job_id = str(uuid.uuid4())
-        context = AgentContext(
-            job_id=job_id,
-            settings=settings,
-            llm_gateway=LLMGateway(settings),
-            artifact_store=ArtifactStore(settings),
-            task_description=data.task_description,
-            extra={
-                "data_source": data.data_source,
-                **data.config,
-            },
-        )
-
-        # Run agent
-        result = agent.run(context)
-
-        return {
-            "job_id": job_id,
-            "agent": data.agent_name,
-            "status": result.status.value,
-            "outputs": result.outputs,
-            "artifacts": result.artifacts,
-            "duration_seconds": result.duration_seconds,
-            "error": result.error,
-        }
+        return await to_thread.run_sync(_run_single_agent, settings, data, str(uuid.uuid4()))
 
     except Exception as e:
         return Response(

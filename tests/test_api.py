@@ -399,6 +399,76 @@ class TestHealthCheck:
             assert self.wait_until(lambda: llm_check.calls == 2)
 
 
+class TestAgentRun:
+    """/api/agent/run runs the agent off the event loop."""
+
+    def test_other_requests_are_served_while_an_agent_runs(self, monkeypatch, tmp_path) -> None:
+        import threading
+
+        from litestar.testing import TestClient
+
+        from agentds.agents.base import AgentResult, AgentStatus, BaseAgent
+        from agentds.web.api import webhooks
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_run(self, context):
+            started.set()
+            assert release.wait(10), "agent was never released"
+            return AgentResult(
+                agent_name=self.__class__.__name__,
+                status=AgentStatus.COMPLETED,
+                outputs={"rows": 3},
+            )
+
+        monkeypatch.setattr(BaseAgent, "run", slow_run)
+        # Health would otherwise start a real LLM check in the background
+        monkeypatch.setattr(webhooks, "_check_llm", lambda _settings: True)
+        headers = {"X-API-Key": "test-key"}
+        result: dict = {}
+
+        with TestClient(app=webhooks.create_api()) as client:
+
+            def call_agent() -> None:
+                result["response"] = client.post(
+                    "/api/agent/run",
+                    json={"agent_name": "DataLoaderAgent", "data_source": str(tmp_path / "d.csv")},
+                    headers=headers,
+                )
+
+            caller = threading.Thread(target=call_agent)
+            caller.start()
+            try:
+                assert started.wait(10), "agent run never started"
+                # The agent is still running; the API must keep answering
+                health = client.get("/api/health", timeout=2)
+                assert health.status_code == 200
+            finally:
+                release.set()
+                caller.join(10)
+
+        response = result["response"]
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["agent"] == "DataLoaderAgent"
+        assert body["status"] == "completed"
+        assert body["outputs"] == {"rows": 3}
+
+    def test_unknown_agent_is_rejected(self) -> None:
+        from litestar.testing import TestClient
+
+        from agentds.web.api import webhooks
+
+        with TestClient(app=webhooks.create_api()) as client:
+            response = client.post(
+                "/api/agent/run",
+                json={"agent_name": "NoSuchAgent", "data_source": "x.csv"},
+                headers={"X-API-Key": "test-key"},
+            )
+        assert response.status_code == 400
+
+
 # =============================================================================
 # Run Tests
 # =============================================================================
