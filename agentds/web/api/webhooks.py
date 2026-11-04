@@ -8,6 +8,8 @@ Author: Malav Patel
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -132,27 +134,61 @@ def get_dependencies() -> tuple[Settings, JobQueue]:
 
 # ==================== API Endpoints ====================
 
+# LLM reachability is checked in the background and cached. The check is a
+# real (billed) completion that can take minutes while a provider is slow, so
+# it must run neither on the event loop nor once per health probe.
+LLM_HEALTH_TTL_SECONDS = 300.0
+_llm_health: dict[str, Any] = {"ok": None, "checked_at": None}
+_llm_health_task: asyncio.Task[None] | None = None
+
+
+def _check_llm(settings: Settings) -> bool:
+    """Blocking check that the default LLM answers."""
+    try:
+        from agentds.core.llm_gateway import LLMGateway
+
+        return bool(LLMGateway(settings).validate_connection())
+    except Exception as e:
+        logger.warning("LLM health check failed", error=str(e))
+        return False
+
+
+async def _refresh_llm_health(settings: Settings) -> None:
+    ok = await to_thread.run_sync(_check_llm, settings)
+    _llm_health.update(ok=ok, checked_at=time.monotonic())
+
+
+def _llm_health_status(settings: Settings) -> bool | None:
+    """
+    Last known LLM reachability, or None before the first check finishes.
+
+    Starts a background refresh when the result is older than
+    LLM_HEALTH_TTL_SECONDS and no check is already running.
+    """
+    global _llm_health_task
+    checked_at = _llm_health["checked_at"]
+    stale = checked_at is None or time.monotonic() - checked_at > LLM_HEALTH_TTL_SECONDS
+    if stale and (_llm_health_task is None or _llm_health_task.done()):
+        # Keep a reference so the task isn't garbage-collected mid-check
+        _llm_health_task = asyncio.create_task(_refresh_llm_health(settings))
+    return _llm_health["ok"]
+
+
 @get("/health")
 async def health_check() -> HealthResponse:
-    """Health check endpoint."""
+    """Health check endpoint.
+
+    Returns immediately. The LLM component reports the last background check
+    (refreshed every LLM_HEALTH_TTL_SECONDS) and is false until the first
+    check has confirmed the provider answers.
+    """
     settings, job_queue = get_dependencies()
 
     components = {
         "api": True,
         "job_queue": True,
+        "llm": bool(_llm_health_status(settings)),
     }
-
-    # Check LLM connection (simplified)
-    try:
-        from agentds.core.llm_gateway import LLMGateway
-
-        gateway = LLMGateway(settings)
-        if gateway.validate_connection():
-            components["llm"] = True
-        else:
-            components["llm"] = False
-    except Exception:
-        components["llm"] = False
 
     return HealthResponse(
         status="healthy" if all(components.values()) else "degraded",

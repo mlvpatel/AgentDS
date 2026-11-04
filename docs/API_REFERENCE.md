@@ -91,6 +91,12 @@ GET /api/health
 }
 ```
 
+The endpoint answers immediately and is safe to use for liveness and readiness
+probes. `llm` reports the result of a background check that calls the default
+model at most once every 5 minutes, and only one check runs at a time. It is
+`false` (and `status` is `degraded`) until the first check has confirmed the
+provider answers.
+
 ---
 
 ### Pipeline Endpoints

@@ -325,6 +325,81 @@ class TestAPIRateLimiting:
 
 
 # =============================================================================
+# Health check
+# =============================================================================
+
+class TestHealthCheck:
+    """The LLM check runs in the background, at most once at a time, and is cached."""
+
+    @pytest.fixture
+    def llm_check(self, monkeypatch):
+        """Replace the real (billed) LLM check with one the test controls."""
+        import threading
+
+        from agentds.web.api import webhooks
+
+        class FakeCheck:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.release = threading.Event()
+
+            def __call__(self, settings) -> bool:
+                self.calls += 1
+                # Blocks like a slow provider until the test releases it
+                assert self.release.wait(10), "check was never released"
+                return True
+
+        fake = FakeCheck()
+        monkeypatch.setattr(webhooks, "_check_llm", fake)
+        monkeypatch.setattr(webhooks, "_llm_health", {"ok": None, "checked_at": None})
+        monkeypatch.setattr(webhooks, "_llm_health_task", None)
+        yield fake
+        fake.release.set()
+
+    @staticmethod
+    def wait_until(condition, timeout: float = 5.0) -> bool:
+        import time
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if condition():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_health_answers_without_waiting_for_llm(self, llm_check, monkeypatch) -> None:
+        from litestar.testing import TestClient
+
+        from agentds.web.api import webhooks
+
+        with TestClient(app=webhooks.create_api()) as client:
+            # The check is stuck "talking to the provider", yet health answers
+            first = client.get("/api/health")
+            assert first.status_code == 200
+            assert first.json()["components"]["llm"] is False  # not confirmed yet
+            assert self.wait_until(lambda: llm_check.calls == 1)
+
+            # A second probe doesn't start another check while one is running
+            client.get("/api/health")
+            assert llm_check.calls == 1
+
+            llm_check.release.set()
+            assert self.wait_until(
+                lambda: client.get("/api/health").json()["components"]["llm"] is True
+            )
+
+            # Within the cache window, probes reuse the result
+            for _ in range(3):
+                assert client.get("/api/health").json()["status"] == "healthy"
+            assert llm_check.calls == 1
+
+            # Once the result is stale, the next probe refreshes it
+            monkeypatch.setattr(webhooks, "LLM_HEALTH_TTL_SECONDS", 0.0)
+            client.get("/api/health")
+            assert self.wait_until(lambda: llm_check.calls == 2)
+
+
+# =============================================================================
 # Run Tests
 # =============================================================================
 
