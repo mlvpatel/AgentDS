@@ -256,15 +256,17 @@ spec:
             limits:
               cpu: "1000m"
               memory: "2Gi"
+          # Liveness only checks the process; readiness also needs Redis, so a
+          # Redis outage takes pods out of the Service without restarting them
           livenessProbe:
             httpGet:
-              path: /api/health
+              path: /api/health/live
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 30
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /api/health/ready
               port: 8000
             initialDelaySeconds: 5
             periodSeconds: 10

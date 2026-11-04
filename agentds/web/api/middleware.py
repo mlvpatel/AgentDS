@@ -237,6 +237,8 @@ class AuthenticationMiddleware(AbstractMiddleware):
     # Paths that don't require authentication
     EXEMPT_PATHS = {
         "/api/health",
+        "/api/health/live",
+        "/api/health/ready",
         "/api/docs",
         "/api/openapi.json",
         "/api/redoc",

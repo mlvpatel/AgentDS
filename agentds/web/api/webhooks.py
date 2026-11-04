@@ -109,6 +109,21 @@ class HealthResponse(BaseModel):
     components: dict[str, bool]
 
 
+class LivenessResponse(BaseModel):
+    """Liveness probe response."""
+
+    status: str
+    timestamp: str
+
+
+class ReadinessResponse(BaseModel):
+    """Readiness probe response."""
+
+    status: str
+    timestamp: str
+    components: dict[str, bool]
+
+
 class ErrorResponse(BaseModel):
     """Error response."""
 
@@ -133,6 +148,19 @@ def get_dependencies() -> tuple[Settings, JobQueue]:
     return _settings, _job_queue
 
 
+async def get_dependencies_async() -> tuple[Settings, JobQueue]:
+    """
+    Get global dependencies without blocking the event loop.
+
+    The first call builds the JobQueue, which connects to Redis and can wait
+    for the full socket timeout when Redis is unreachable; that happens in a
+    worker thread so other requests (liveness probes included) keep flowing.
+    """
+    if _settings is None or _job_queue is None:
+        return await to_thread.run_sync(get_dependencies)
+    return _settings, _job_queue
+
+
 # ==================== API Endpoints ====================
 
 # Health checks of dependencies run in the background and are cached, so a
@@ -141,6 +169,9 @@ def get_dependencies() -> tuple[Settings, JobQueue]:
 # job queue check is a Redis PING.
 LLM_HEALTH_TTL_SECONDS = 300.0
 JOB_QUEUE_HEALTH_TTL_SECONDS = 10.0
+# How long the readiness probe waits for the very first job queue check;
+# below the 1 s default probe timeout of Kubernetes
+READINESS_FIRST_CHECK_WAIT_SECONDS = 0.5
 
 
 class BackgroundCheck:
@@ -166,6 +197,18 @@ class BackgroundCheck:
             # Keep a reference so the task isn't garbage-collected mid-check
             self._task = asyncio.create_task(self._refresh())
         return self.ok
+
+    async def first_status(self, wait_seconds: float) -> bool | None:
+        """
+        Like ``status()``, but before the first check has finished, wait up to
+        ``wait_seconds`` for it, so a fast dependency is reported on the first
+        call instead of None.
+        """
+        ok = self.status()
+        if self.checked_at is None and self._task is not None:
+            await asyncio.wait({self._task}, timeout=wait_seconds)  # doesn't cancel the check
+            ok = self.ok
+        return ok
 
     async def _refresh(self) -> None:
         try:
@@ -207,15 +250,53 @@ def _get_health_checks(settings: Settings, job_queue: JobQueue) -> dict[str, Bac
     return _health_checks
 
 
+@get("/health/live")
+async def liveness_check() -> LivenessResponse:
+    """Liveness probe: the process is up and its event loop is answering.
+
+    Checks no dependencies, so a Redis or LLM outage never gets a healthy
+    process restarted (restarting would not fix either).
+    """
+    return LivenessResponse(status="alive", timestamp=datetime.now(timezone.utc).isoformat())
+
+
+@get("/health/ready")
+async def readiness_check() -> Response[ReadinessResponse]:
+    """Readiness probe: this instance can accept work.
+
+    Returns 200 when the job queue backend answered its last background check
+    (a Redis PING, refreshed every JOB_QUEUE_HEALTH_TTL_SECONDS), and 503 while
+    it is failing or before its first check has passed. The LLM is left out on
+    purpose: a provider outage affects every instance alike, and taking them
+    all out of service would turn it into a full API outage.
+    """
+    settings, job_queue = await get_dependencies_async()
+    job_queue_check = _get_health_checks(settings, job_queue)["job_queue"]
+    components = {
+        "job_queue": bool(await job_queue_check.first_status(READINESS_FIRST_CHECK_WAIT_SECONDS)),
+    }
+    ready = all(components.values())
+
+    return Response(
+        content=ReadinessResponse(
+            status="ready" if ready else "not_ready",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            components=components,
+        ),
+        status_code=200 if ready else 503,
+    )
+
+
 @get("/health")
 async def health_check() -> HealthResponse:
-    """Health check endpoint.
+    """Health report of every component, for dashboards and people.
 
-    Returns immediately. ``job_queue`` and ``llm`` report the last background
-    check of each dependency (refreshed every JOB_QUEUE_HEALTH_TTL_SECONDS and
+    Always returns 200; use /health/live and /health/ready for probes.
+    ``job_queue`` and ``llm`` report the last background check of each
+    dependency (refreshed every JOB_QUEUE_HEALTH_TTL_SECONDS and
     LLM_HEALTH_TTL_SECONDS) and are false until a first check has passed.
     """
-    settings, job_queue = get_dependencies()
+    settings, job_queue = await get_dependencies_async()
     checks = _get_health_checks(settings, job_queue)
 
     components = {
@@ -620,6 +701,8 @@ api_router = Router(
     path="/api",
     route_handlers=[
         health_check,
+        liveness_check,
+        readiness_check,
         start_pipeline,
         get_pipeline_status,
         cancel_pipeline,

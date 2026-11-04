@@ -22,7 +22,7 @@ Base URL: `http://localhost:8000/api`
 
 ### Authentication
 
-All API endpoints (except `/api/health` and `/api/docs`) require authentication via API key.
+All API endpoints (except the `/api/health` endpoints and `/api/docs`) require authentication via API key.
 
 **Header Authentication (Recommended):**
 ```http
@@ -71,13 +71,68 @@ X-RateLimit-Remaining: 58
 
 ---
 
-### Health Check
+### Health Checks
+
+Three endpoints, none of which needs an API key. All answer immediately: the
+dependency checks behind them run in the background, each one at a time, and
+the last result is reused until it is refreshed.
+
+#### Liveness
+
+```http
+GET /api/health/live
+```
+
+Always `200` while the process is serving requests. It checks no dependencies,
+so a Redis or LLM outage never gets a working process restarted. Use it for the
+Kubernetes `livenessProbe`.
+
+```json
+{
+  "status": "alive",
+  "timestamp": "2026-01-29T12:00:00Z"
+}
+```
+
+#### Readiness
+
+```http
+GET /api/health/ready
+```
+
+`200` when this instance can take work, `503` when it can't. Use it for the
+Kubernetes `readinessProbe` and the Docker Compose `healthcheck`.
+
+```json
+{
+  "status": "ready",
+  "timestamp": "2026-01-29T12:00:00Z",
+  "components": {
+    "job_queue": true
+  }
+}
+```
+
+When not ready, `status` is `not_ready`, `job_queue` is `false` and the
+response code is `503`.
+
+- `job_queue` is a Redis `PING`, refreshed every 10 seconds, when the Redis job
+  queue is in use. With the in-memory fallback it is always `true`.
+- Before the first check has finished, the endpoint waits up to 0.5 seconds for
+  it, so a healthy instance is ready on its first probe. If the check is still
+  running after that, the instance reports `503` until the check passes.
+- The LLM is not part of readiness. A provider outage affects every instance
+  alike, so taking them all out of service would turn it into a full API outage.
+
+#### Health Report
 
 ```http
 GET /api/health
 ```
 
-**Response:**
+The state of every component, for dashboards and people. Always `200`, even
+when `status` is `degraded`; use the endpoints above for probes.
+
 ```json
 {
   "status": "healthy",
@@ -91,13 +146,9 @@ GET /api/health
 }
 ```
 
-The endpoint answers immediately and is safe to use for liveness and readiness
-probes. `job_queue` and `llm` report background checks, each run one at a time
-and reused until it is refreshed:
-
-- `job_queue`: a Redis `PING`, refreshed every 10 seconds, when the Redis job
-  queue is in use. With the in-memory fallback it is always `true`.
-- `llm`: a call to the default model, refreshed every 5 minutes.
+- `job_queue`: the same Redis check as readiness.
+- `llm`: a call to the default model, refreshed every 5 minutes. Only this
+  endpoint starts it, so the probes don't pay for model calls.
 
 Each is `false` (and `status` is `degraded`) until its first check has passed,
 and while the last check failed.

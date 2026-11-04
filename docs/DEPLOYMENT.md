@@ -396,7 +396,11 @@ performance:
 # HTTP health check
 curl http://localhost:7860/
 
-# API health check
+# API liveness (process up) and readiness (Redis reachable; 503 if not)
+curl http://localhost:8000/api/health/live
+curl -f http://localhost:8000/api/health/ready
+
+# API health report of every component, including the LLM
 curl http://localhost:8000/api/health
 ```
 
