@@ -135,6 +135,33 @@ def _state_safe(value: Any) -> Any:
     return f"<{type(value).__name__} not stored in pipeline state>"
 
 
+def create_pipeline_job(
+    job_queue: JobQueue,
+    config: PipelineConfig,
+    data_source: str,
+    task_description: str,
+    output_destination: str | None = None,
+    job_id: str | None = None,
+) -> Job:
+    """
+    Record a pipeline run in the job queue before it starts.
+
+    The job keeps everything needed to run or resume the pipeline in another
+    process: the inputs and the pipeline configuration.
+    """
+    return job_queue.create_job(
+        name=f"Pipeline: {task_description[:50]}",
+        task="full_pipeline",
+        kwargs={
+            "data_source": data_source,
+            "task_description": task_description,
+            "output_destination": output_destination,
+            "pipeline_config": config.model_dump(mode="json"),
+        },
+        job_id=job_id,
+    )
+
+
 @dataclass
 class PreflightCheckResult:
     """Result of pre-flight validation."""
@@ -581,20 +608,21 @@ class AgentDSPipeline:
             ``progress_percent``, the graph ``state`` and the ``job`` record.
             When ``status`` is ``awaiting_approval``, call :meth:`resume`.
         """
+        # Reuse the job record if the caller created it already (for example
+        # the API, before handing the run to a background worker)
+        job = self.job_queue.get_job(job_id) if job_id else None
         job_id = job_id or str(uuid.uuid4())
         output_destination = output_destination or str(self.settings.output_dir / job_id)
 
-        # Create the job under the same id the caller gets back
-        job = self.job_queue.create_job(
-            name=f"Pipeline: {task_description[:50]}",
-            task="full_pipeline",
-            kwargs={
-                "data_source": data_source,
-                "task_description": task_description,
-                "output_destination": output_destination,
-            },
-            job_id=job_id,
-        )
+        if job is None:
+            job = create_pipeline_job(
+                self.job_queue,
+                self.config,
+                data_source=data_source,
+                task_description=task_description,
+                output_destination=output_destination,
+                job_id=job_id,
+            )
         job.mark_running()
         self.job_queue.update_job(job)
 
@@ -662,19 +690,21 @@ class AgentDSPipeline:
             raise ValueError("Pipeline is not running in human-in-the-loop mode")
 
         config = self._thread_config(job_id)
-        snapshot = self._compiled.get_state(config)
-        if REVIEW_NODE not in snapshot.next:
-            raise ValueError(f"Job {job_id} is not awaiting review")
+        job = self.job_queue.get_job(job_id)
+        update: dict[str, Any] = {"user_action": action.value, "user_feedback": user_feedback}
+
+        if REVIEW_NODE not in self._compiled.get_state(config).next:
+            # Not paused in this process (for example a background worker
+            # that didn't run the first part): restore the state the run
+            # saved on its job record when it paused.
+            if not (job and job.pipeline_state):
+                raise ValueError(f"Job {job_id} is not awaiting review")
+            update = {**job.pipeline_state, **update}
 
         # Record the decision as the review node's output; execution then
         # continues at handle_action.
-        self._compiled.update_state(
-            config,
-            {"user_action": action.value, "user_feedback": user_feedback},
-            as_node=REVIEW_NODE,
-        )
+        self._compiled.update_state(config, update, as_node=REVIEW_NODE)
 
-        job = self.job_queue.get_job(job_id)
         if job:
             job.resume(user_feedback)
             self.job_queue.update_job(job)
@@ -732,6 +762,8 @@ class AgentDSPipeline:
                 job.mark_completed(state.get("final_outputs"))
             elif status == "awaiting_approval":
                 job.mark_paused()
+            # Keep the paused state with the job so any process can resume it
+            job.pipeline_state = dict(state) if status == "awaiting_approval" else None
             self.job_queue.update_job(job)
 
         if status == "completed":

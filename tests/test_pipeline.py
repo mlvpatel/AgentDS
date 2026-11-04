@@ -18,9 +18,15 @@ import pytest
 
 from agentds.agents.base import AgentAction, AgentResult, AgentStatus, BaseAgent
 from agentds.core.config import Settings, get_settings
-from agentds.core.job_queue import JobQueue, JobStatus
+from agentds.core.job_queue import JobQueue, JobStatus, RedisQueue
 from agentds.workflows import pipeline as pipeline_module
-from agentds.workflows.pipeline import AgentDSPipeline, PipelineConfig, PipelinePhase
+from agentds.workflows.pipeline import (
+    AgentDSPipeline,
+    PipelineConfig,
+    PipelinePhase,
+    create_pipeline_job,
+)
+from agentds.workflows.tasks import resume_pipeline_job, run_pipeline_job
 
 BUILD_AGENTS = [
     "DataLoaderAgent",
@@ -291,6 +297,224 @@ class TestHumanInTheLoop:
 
         with pytest.raises(ValueError, match="human-in-the-loop"):
             pipeline.resume(result["job_id"], AgentAction.APPROVE_AND_CONTINUE.value)
+
+
+class TestResumeInAnotherProcess:
+    """A paused run can be resumed by a different process, e.g. a background worker."""
+
+    def test_paused_state_is_saved_on_job_and_cleared_when_done(
+        self, fake_agents: FakeAgents, job_queue: JobQueue, sample_csv_path: Path, tmp_path: Path
+    ) -> None:
+        pipeline = make_pipeline(job_queue, phases=[PipelinePhase.LEARN], human_in_loop=True)
+        result = start(pipeline, sample_csv_path, tmp_path)
+
+        saved = job_queue.get_job(result["job_id"]).pipeline_state
+        assert saved is not None
+        assert saved["current_agent"] == "DriftMonitorAgent"
+
+        while result["status"] == "awaiting_approval":
+            result = pipeline.resume(result["job_id"], AgentAction.APPROVE_AND_CONTINUE.value)
+        assert job_queue.get_job(result["job_id"]).pipeline_state is None
+
+    def test_fresh_pipeline_instance_resumes_from_saved_state(
+        self, fake_agents: FakeAgents, job_queue: JobQueue, sample_csv_path: Path, tmp_path: Path
+    ) -> None:
+        first = make_pipeline(job_queue, human_in_loop=True)
+        result = start(first, sample_csv_path, tmp_path)
+
+        # A new instance has an empty in-memory checkpointer, like a worker
+        second = make_pipeline(job_queue, human_in_loop=True)
+        resumed = second.resume(result["job_id"], AgentAction.APPROVE_AND_CONTINUE.value)
+
+        assert fake_agents.names == ["DataLoaderAgent", "DataCleaningAgent"]
+        assert resumed["status"] == "awaiting_approval"
+        assert resumed["current_agent"] == "DataCleaningAgent"
+        # Earlier agents' results came across with the saved state
+        assert set(resumed["state"]["agent_results"]) == {"DataLoaderAgent", "DataCleaningAgent"}
+
+
+class TestBackgroundTasks:
+    """Task functions the RQ worker runs, and handing tasks to it."""
+
+    def test_run_and_resume_tasks_load_everything_from_the_job(
+        self, fake_agents: FakeAgents, job_queue: JobQueue, sample_csv_path: Path, tmp_path: Path
+    ) -> None:
+        config = PipelineConfig(phases=[PipelinePhase.LEARN], human_in_loop=True)
+        job = create_pipeline_job(
+            job_queue,
+            config,
+            data_source=str(sample_csv_path),
+            task_description="churn",
+            output_destination=str(tmp_path / "out"),
+        )
+
+        paused = run_pipeline_job(job.id, job_queue=job_queue)
+        assert paused == {
+            "job_id": job.id,
+            "status": "awaiting_approval",
+            "current_agent": "DriftMonitorAgent",
+            "progress_percent": 50.0,
+            "error": None,
+        }
+
+        resumed = resume_pipeline_job(job.id, "approve_and_continue", job_queue=job_queue)
+        assert resumed["current_agent"] == "OptimizationAgent"
+        done = resume_pipeline_job(job.id, "approve_and_continue", job_queue=job_queue)
+        assert done["status"] == "completed"
+        assert fake_agents.names == LEARN_AGENTS
+
+    def test_run_task_rejects_unknown_job(self, job_queue: JobQueue) -> None:
+        with pytest.raises(ValueError, match="No job"):
+            run_pipeline_job("missing", job_queue=job_queue)
+
+    def test_submit_without_redis_returns_false(self, job_queue: JobQueue) -> None:
+        assert job_queue.submit(run_pipeline_job, "J1", job_timeout=60) is False
+
+    def test_submit_hands_task_to_redis_backend(self, job_queue: JobQueue) -> None:
+        backend = MagicMock(spec=RedisQueue)
+        backend.submit.return_value = "rq-job-1"
+        job_queue._backend = backend
+
+        assert job_queue.submit(run_pipeline_job, "J1", job_timeout=60) is True
+        backend.submit.assert_called_once_with(run_pipeline_job, "J1", job_timeout=60)
+
+        backend.submit.return_value = None  # no worker listening
+        assert job_queue.submit(run_pipeline_job, "J1", job_timeout=60) is False
+
+    def test_redis_queue_enqueues_only_when_a_worker_listens(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import rq
+
+        redis_queue = RedisQueue("redis://localhost:6399/0")  # no connection is made here
+        enqueue = MagicMock(return_value=MagicMock(id="rq-job-1"))
+        monkeypatch.setattr(redis_queue._queue, "enqueue", enqueue)
+
+        monkeypatch.setattr(rq.Worker, "count", MagicMock(return_value=0))
+        assert redis_queue.submit(run_pipeline_job, "J1", job_timeout=60) is None
+        enqueue.assert_not_called()
+
+        monkeypatch.setattr(rq.Worker, "count", MagicMock(return_value=1))
+        assert redis_queue.submit(run_pipeline_job, "J1", job_timeout=60) == "rq-job-1"
+        enqueue.assert_called_once_with(run_pipeline_job, "J1", job_timeout=60)
+
+
+class TestPipelineAPI:
+    """The REST API hands pipeline runs to a worker, or runs them off the event loop."""
+
+    HEADERS = {"X-API-Key": "test-key"}
+
+    @pytest.fixture
+    def client(self, fake_agents: FakeAgents, job_queue: JobQueue, monkeypatch: pytest.MonkeyPatch):
+        from litestar.testing import TestClient
+
+        from agentds.web.api import webhooks
+
+        monkeypatch.setattr(webhooks, "_job_queue", job_queue)
+        monkeypatch.setattr(webhooks, "_settings", get_settings())
+        with TestClient(app=webhooks.create_api()) as client:
+            yield client
+
+    def start_body(self, data: Path, tmp_path: Path) -> dict[str, Any]:
+        return {
+            "data_source": str(data),
+            "task_description": "churn",
+            "output_destination": str(tmp_path / "out"),
+            "phases": ["learn"],
+            "human_in_loop": True,
+        }
+
+    def test_without_worker_runs_in_thread_and_resumes_from_saved_state(
+        self, client, fake_agents: FakeAgents, sample_csv_path: Path, tmp_path: Path
+    ) -> None:
+        start_response = client.post(
+            "/api/pipeline/start", json=self.start_body(sample_csv_path, tmp_path), headers=self.HEADERS
+        )
+        assert start_response.status_code == 201, start_response.text
+        started = start_response.json()
+        assert started["status"] == "awaiting_approval"
+        job_id = started["job_id"]
+
+        status = client.get(f"/api/pipeline/status/{job_id}", headers=self.HEADERS).json()
+        assert status["status"] == "paused"
+        assert status["current_agent"] == "DriftMonitorAgent"
+
+        approve = {"action": "approve_and_continue"}
+        first = client.post(f"/api/pipeline/action/{job_id}", json=approve, headers=self.HEADERS)
+        assert first.status_code == 201, first.text
+        assert first.json()["current_agent"] == "OptimizationAgent"
+        second = client.post(f"/api/pipeline/action/{job_id}", json=approve, headers=self.HEADERS)
+        assert second.json()["pipeline_status"] == "completed"
+
+        again = client.post(f"/api/pipeline/action/{job_id}", json=approve, headers=self.HEADERS)
+        assert again.status_code == 409
+        assert fake_agents.names == LEARN_AGENTS
+
+    def test_with_worker_queues_runs_and_review_actions(
+        self,
+        client,
+        fake_agents: FakeAgents,
+        job_queue: JobQueue,
+        sample_csv_path: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        submitted: list[tuple[Any, tuple, dict]] = []
+
+        def submit(func, *args, **kwargs) -> bool:
+            submitted.append((func, args, kwargs))
+            return True
+
+        monkeypatch.setattr(job_queue, "submit", submit)
+
+        start_response = client.post(
+            "/api/pipeline/start", json=self.start_body(sample_csv_path, tmp_path), headers=self.HEADERS
+        )
+        assert start_response.status_code == 202, start_response.text
+        job_id = start_response.json()["job_id"]
+        assert start_response.json()["status"] == "queued"
+        func, args, kwargs = submitted.pop()
+        assert func is run_pipeline_job and args == (job_id,)
+        assert kwargs == {"job_timeout": get_settings().pipeline_job_timeout}
+        assert fake_agents.calls == []  # nothing ran in the API process
+        assert job_queue.get_job(job_id).status == JobStatus.QUEUED
+
+        # Play the worker's part
+        func(*args, job_queue=job_queue)
+        assert job_queue.get_job(job_id).status == JobStatus.PAUSED
+
+        action = client.post(
+            f"/api/pipeline/action/{job_id}",
+            json={"action": "rerun_with_feedback", "feedback": "drop id"},
+            headers=self.HEADERS,
+        )
+        assert action.status_code == 202, action.text
+        func, args, _ = submitted.pop()
+        assert func is resume_pipeline_job
+        assert args == (job_id, "rerun_with_feedback", "drop id")
+
+        # The review is claimed until the worker picks it up
+        assert job_queue.get_job(job_id).status == JobStatus.RUNNING
+        duplicate = client.post(
+            f"/api/pipeline/action/{job_id}",
+            json={"action": "approve_and_continue"},
+            headers=self.HEADERS,
+        )
+        assert duplicate.status_code == 409
+
+        func(*args, job_queue=job_queue)
+        assert fake_agents.calls[-1] == ("DriftMonitorAgent", "drop id")
+        assert job_queue.get_job(job_id).status == JobStatus.PAUSED
+
+    def test_action_rejects_non_review_actions(
+        self, client, sample_csv_path: Path, tmp_path: Path
+    ) -> None:
+        response = client.post(
+            "/api/pipeline/action/anything",
+            json={"action": "download_output"},
+            headers=self.HEADERS,
+        )
+        assert response.status_code == 400
 
 
 class TestCLI:

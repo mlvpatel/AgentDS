@@ -110,15 +110,38 @@ Content-Type: application/json
 }
 ```
 
-**Response:**
+**Response when an RQ worker is running** (`202 Accepted`): the run is handed to
+the worker (`python -m rq.cli worker`, the `worker` service in docker-compose).
+Poll the status endpoint for progress.
 ```json
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "started",
-  "message": "Pipeline started successfully",
-  "created_at": "2026-01-29T12:00:00Z"
+  "status": "queued",
+  "message": "Pipeline queued for a worker; poll /api/pipeline/status/550e8400-e29b-41d4-a716-446655440000",
+  "created_at": "2026-01-29T12:00:00Z",
+  "current_agent": null,
+  "error": null
 }
 ```
+
+**Response without a worker** (`201 Created`): the API runs the pipeline itself,
+in a background thread, and replies once it completes, fails or pauses for
+review. `status` is `completed`, `failed`, `cancelled` or `awaiting_approval`.
+```json
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "awaiting_approval",
+  "message": "Waiting for review of DataLoaderAgent",
+  "created_at": "2026-01-29T12:00:00Z",
+  "current_agent": "DataLoaderAgent",
+  "error": null
+}
+```
+
+Runs are handed to a worker only when the Redis job queue is in use and at least
+one worker is listening; otherwise they run in the API process.
+`PIPELINE_JOB_TIMEOUT` (seconds, default 21600) limits how long a worker may
+spend on one run or review action.
 
 #### Get Pipeline Status
 
@@ -174,12 +197,30 @@ Content-Type: application/json
 - `stop_pipeline` - Terminate pipeline
 - `rollback` - Return to previous checkpoint
 
-**Response:**
+The job must be waiting for review (status `paused`); otherwise the API returns
+`409 Conflict`. A paused run can be resumed by any API instance or worker, because
+its state is stored with the job.
+
+**Response when an RQ worker is running** (`202 Accepted`): poll the status endpoint.
+```json
+{
+  "status": "queued",
+  "action": "approve_and_continue",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "message": "Review action queued for a worker; poll /api/pipeline/status/550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Response without a worker** (`201 Created`):
 ```json
 {
   "status": "success",
   "action": "approve_and_continue",
-  "job_id": "550e8400-e29b-41d4-a716-446655440000"
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "pipeline_status": "awaiting_approval",
+  "current_agent": "DataCleaningAgent",
+  "message": "Waiting for review of DataCleaningAgent",
+  "error": null
 }
 ```
 

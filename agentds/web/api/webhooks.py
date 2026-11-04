@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from anyio import to_thread
 from litestar import Litestar, Router, delete, get, post
 from litestar.config.cors import CORSConfig
 from litestar.openapi import OpenAPIConfig
@@ -22,7 +23,13 @@ from agentds.agents import AgentAction
 from agentds.core.config import Settings, get_settings
 from agentds.core.job_queue import JobQueue, JobStatus
 from agentds.core.logger import get_logger
-from agentds.workflows.pipeline import AgentDSPipeline, PipelineConfig, PipelinePhase
+from agentds.workflows.pipeline import (
+    REVIEW_ACTIONS,
+    PipelineConfig,
+    PipelinePhase,
+    create_pipeline_job,
+)
+from agentds.workflows.tasks import resume_pipeline_job, run_pipeline_job
 
 logger = get_logger(__name__)
 
@@ -111,7 +118,6 @@ class ErrorResponse(BaseModel):
 
 _settings: Settings | None = None
 _job_queue: JobQueue | None = None
-_active_pipelines: dict[str, Any] = {}
 
 
 def get_dependencies() -> tuple[Settings, JobQueue]:
@@ -158,7 +164,14 @@ async def health_check() -> HealthResponse:
 
 @post("/pipeline/start")
 async def start_pipeline(data: PipelineStartRequest) -> PipelineStartResponse:
-    """Start a new pipeline execution."""
+    """Start a new pipeline execution.
+
+    With the Redis queue and an RQ worker running, the run is handed to the
+    worker and this returns 202 with status "queued"; poll
+    /api/pipeline/status/{job_id}. Otherwise the pipeline runs in a thread of
+    this process, so the event loop stays free, and the response reports the
+    outcome.
+    """
     settings, job_queue = get_dependencies()
 
     try:
@@ -169,27 +182,36 @@ async def start_pipeline(data: PipelineStartRequest) -> PipelineStartResponse:
             human_in_loop=data.human_in_loop,
         )
 
-        # Create and run pipeline. Share the API's job queue so the job is
-        # visible to /pipeline/status and /jobs under the returned job_id.
-        pipeline = AgentDSPipeline(config=config, settings=settings, job_queue=job_queue)
-        job_id = str(uuid.uuid4())
-
-        result = pipeline.run(
+        # Record the job first: the worker (or thread) loads it by id, and
+        # /pipeline/status can report on it straight away.
+        job = create_pipeline_job(
+            job_queue,
+            config,
             data_source=data.data_source,
             task_description=data.task_description,
             output_destination=data.output_destination,
-            job_id=job_id,
         )
+        created_at = datetime.now(timezone.utc).isoformat()
 
-        # Keep the pipeline only while it waits for a review action
-        if result["status"] == "awaiting_approval":
-            _active_pipelines[job_id] = {"pipeline": pipeline}
+        if job_queue.submit(run_pipeline_job, job.id, job_timeout=settings.pipeline_job_timeout):
+            return Response(
+                content=PipelineStartResponse(
+                    job_id=job.id,
+                    status="queued",
+                    message=f"Pipeline queued for a worker; poll /api/pipeline/status/{job.id}",
+                    created_at=created_at,
+                ).model_dump(),
+                status_code=202,
+            )
+
+        # No worker available: run here, off the event loop
+        result = await to_thread.run_sync(run_pipeline_job, job.id, job_queue)
 
         return PipelineStartResponse(
-            job_id=job_id,
+            job_id=job.id,
             status=result["status"],
             message=_status_message(result),
-            created_at=datetime.now(timezone.utc).isoformat(),
+            created_at=created_at,
             current_agent=result["current_agent"],
             error=result["error"],
         )
@@ -282,38 +304,65 @@ async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, Any]:
             status_code=400,
         )
 
-    # Get pipeline
-    if job_id not in _active_pipelines:
+    if action not in REVIEW_ACTIONS:
         return Response(
             content=ErrorResponse(
-                error="Pipeline not found",
-                detail=f"No active pipeline with ID: {job_id}",
+                error="Invalid action",
+                detail=f"Action must be one of: {sorted(a.value for a in REVIEW_ACTIONS)}",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            ).model_dump(),
+            status_code=400,
+        )
+
+    job = job_queue.get_job(job_id)
+    if not job:
+        return Response(
+            content=ErrorResponse(
+                error="Job not found",
+                detail=f"No job with ID: {job_id}",
                 timestamp=datetime.now(timezone.utc).isoformat(),
             ).model_dump(),
             status_code=404,
         )
 
-    pipeline_data = _active_pipelines[job_id]
-    pipeline = pipeline_data["pipeline"]
-
-    try:
-        result = pipeline.resume(
-            job_id=job_id,
-            user_action=action.value,
-            user_feedback=data.feedback,
-        )
-    except ValueError as e:
-        # Not a review action, or the pipeline is not waiting for review
+    if job.status != JobStatus.PAUSED or not job.pipeline_state:
         return Response(
             content=ErrorResponse(
                 error="Action not allowed",
-                detail=str(e),
+                detail=f"Job {job_id} is not awaiting review (status: {job.status.value})",
                 timestamp=datetime.now(timezone.utc).isoformat(),
             ).model_dump(),
             status_code=409,
         )
+
+    # Claim the review before handing it off, so a second action gets 409 and
+    # this request's copy of the job can't overwrite a worker's later updates.
+    job.resume(data.feedback)
+    job_queue.update_job(job)
+
+    if job_queue.submit(
+        resume_pipeline_job,
+        job_id,
+        action.value,
+        data.feedback,
+        job_timeout=settings.pipeline_job_timeout,
+    ):
+        return Response(
+            content={
+                "status": "queued",
+                "action": action.value,
+                "job_id": job_id,
+                "message": f"Review action queued for a worker; poll /api/pipeline/status/{job_id}",
+            },
+            status_code=202,
+        )
+
+    # No worker available: resume here, off the event loop
+    try:
+        result = await to_thread.run_sync(
+            resume_pipeline_job, job_id, action.value, data.feedback, job_queue
+        )
     except Exception as e:
-        _active_pipelines.pop(job_id, None)
         return Response(
             content=ErrorResponse(
                 error="Action failed",
@@ -322,9 +371,6 @@ async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, Any]:
             ).model_dump(),
             status_code=500,
         )
-
-    if result["status"] != "awaiting_approval":
-        _active_pipelines.pop(job_id, None)
 
     return {
         "status": "success",

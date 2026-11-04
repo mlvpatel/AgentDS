@@ -247,6 +247,10 @@ class Settings(BaseSettings):
     human_in_loop: bool = Field(default=True, alias="HUMAN_IN_LOOP")
     auto_approve_low_risk: bool = Field(default=False)
 
+    # Background workers: longest a worker may spend on one pipeline run or
+    # resume (RQ's own default of 180 seconds is far too short for AutoML)
+    pipeline_job_timeout: int = Field(default=6 * 60 * 60, alias="PIPELINE_JOB_TIMEOUT")
+
     # Nested settings
     llm: LLMSettings = Field(default_factory=LLMSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
