@@ -9,6 +9,7 @@ Author: Malav Patel
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -74,6 +75,10 @@ class Job(BaseModel):
     # User interaction
     requires_approval: bool = Field(default=False)
     user_feedback: str | None = None
+
+    # Pipeline graph state saved while paused for review, so the run can be
+    # resumed by a different process (for example a background worker)
+    pipeline_state: dict[str, Any] | None = None
 
     def update_progress(
         self,
@@ -190,17 +195,23 @@ class InMemoryQueue:
 class RedisQueue:
     """Redis Queue (RQ) based job queue."""
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, socket_timeout: float | None = None) -> None:
         """
         Initialize Redis queue.
 
         Args:
             url: Redis connection URL
+            socket_timeout: Seconds to wait when connecting to or reading from
+                Redis; None waits indefinitely
         """
         import redis
         from rq import Queue
 
-        self._connection = redis.from_url(url)
+        self._connection = redis.from_url(
+            url,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_timeout,
+        )
         self._queue = Queue(connection=self._connection)
         self._jobs_key = "agentds:jobs"
 
@@ -208,14 +219,27 @@ class RedisQueue:
         """Add job to queue."""
         import pickle
 
-        # Store job data in Redis hash
+        # Set the status before storing, so readers see "queued"
+        job.status = JobStatus.QUEUED
         self._connection.hset(
             self._jobs_key,
             job.id,
             pickle.dumps(job),
         )
-        job.status = JobStatus.QUEUED
         return job.id
+
+    def submit(self, func: Callable[..., Any], *args: Any, job_timeout: int) -> str | None:
+        """
+        Hand a task to an RQ worker.
+
+        Returns the RQ job id, or None when no worker is listening on the
+        queue (the task would otherwise wait in Redis indefinitely).
+        """
+        from rq import Worker
+
+        if Worker.count(queue=self._queue) == 0:
+            return None
+        return self._queue.enqueue(func, *args, job_timeout=job_timeout).id
 
     def get_job(self, job_id: str) -> Job | None:
         """Get job by ID."""
@@ -285,7 +309,10 @@ class JobQueue:
         """Initialize appropriate queue backend."""
         if self.settings.is_feature_enabled("redis_queue"):
             try:
-                redis_queue = RedisQueue(self.settings.redis.url)
+                redis_queue = RedisQueue(
+                    self.settings.redis.url,
+                    socket_timeout=self.settings.redis.socket_timeout,
+                )
                 if redis_queue.ping():
                     self._backend = redis_queue
                     logger.info("Using Redis job queue backend")
@@ -305,6 +332,7 @@ class JobQueue:
         args: list[Any] | None = None,
         kwargs: dict[str, Any] | None = None,
         priority: JobPriority = JobPriority.NORMAL,
+        job_id: str | None = None,
     ) -> Job:
         """
         Create and enqueue a new job.
@@ -315,6 +343,7 @@ class JobQueue:
             args: Positional arguments
             kwargs: Keyword arguments
             priority: Job priority
+            job_id: Use this id instead of generating one
 
         Returns:
             Created Job instance
@@ -325,6 +354,7 @@ class JobQueue:
             args=args or [],
             kwargs=kwargs or {},
             priority=priority,
+            **({"id": job_id} if job_id else {}),
         )
         self._backend.enqueue(job)
         logger.info("Job created", job_id=job.id, name=name, task=task)
@@ -337,6 +367,39 @@ class JobQueue:
     def update_job(self, job: Job) -> bool:
         """Update job."""
         return self._backend.update_job(job)
+
+    def ping(self) -> bool:
+        """
+        Check the backend can be reached.
+
+        Pings Redis for the Redis backend. The in-memory backend lives in this
+        process, so it is always reachable.
+        """
+        if isinstance(self._backend, RedisQueue):
+            return self._backend.ping()
+        return True
+
+    def submit(self, func: Callable[..., Any], *args: Any, job_timeout: int) -> bool:
+        """
+        Run a task on an RQ background worker, if one is available.
+
+        Args:
+            func: Importable task function (for example from agentds.workflows.tasks)
+            *args: Task arguments; they must be picklable
+            job_timeout: Seconds the worker may spend on the task
+
+        Returns:
+            True if a worker will run the task; False if the caller must run it
+            (in-memory backend, or no worker listening on the Redis queue).
+        """
+        if not isinstance(self._backend, RedisQueue):
+            return False
+        rq_job_id = self._backend.submit(func, *args, job_timeout=job_timeout)
+        if rq_job_id is None:
+            logger.warning("No RQ worker is listening; running the task in this process")
+            return False
+        logger.info("Task submitted to RQ worker", task=getattr(func, "__name__", str(func)), rq_job_id=rq_job_id)
+        return True
 
     def delete_job(self, job_id: str) -> bool:
         """Delete job."""

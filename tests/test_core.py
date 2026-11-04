@@ -168,6 +168,52 @@ class TestJobQueue:
         assert job.progress_percent == 20.0
         assert job.current_agent == "TestAgent"
 
+    def test_redis_backend_dependencies_are_installed(self):
+        """A normal install provides everything RedisQueue imports.
+
+        Without rq, RedisQueue fails to import and JobQueue silently falls
+        back to the in-memory queue even when Redis is reachable.
+        """
+        import importlib.util
+
+        for module in ("redis", "rq"):
+            assert importlib.util.find_spec(module) is not None, f"{module} is not installed"
+
+    def test_redis_connection_uses_configured_socket_timeout(self):
+        """A hung Redis can't stall a ping or job operation forever."""
+        from agentds.core.job_queue import RedisQueue
+
+        redis_queue = RedisQueue("redis://localhost:6399/0", socket_timeout=2)  # no I/O here
+        kwargs = redis_queue._connection.connection_pool.connection_kwargs
+
+        assert kwargs["socket_timeout"] == 2
+        assert kwargs["socket_connect_timeout"] == 2
+
+    def test_in_memory_queue_ping_is_true(self):
+        from agentds.core.job_queue import InMemoryQueue, JobQueue
+
+        queue = JobQueue.__new__(JobQueue)
+        queue._backend = InMemoryQueue()
+        assert queue.ping() is True
+
+
+class TestPackaging:
+    """Packages the code imports directly must be declared, not arrive transitively."""
+
+    def test_direct_runtime_imports_are_declared(self):
+        import re
+        from importlib.metadata import requires
+
+        declared = {
+            re.split(r"[\s<>=!~\[;]", requirement, maxsplit=1)[0].lower()
+            for requirement in requires("agentds") or []
+            if "extra ==" not in requirement  # optional extras don't count
+        }
+
+        # click: the `agentds` CLI; redis and rq: the Redis job queue
+        for package in ("click", "redis", "rq"):
+            assert package in declared, f"{package} is imported but not declared in pyproject.toml"
+
 
 # =============================================================================
 # Artifact Store Tests

@@ -325,6 +325,346 @@ class TestAPIRateLimiting:
 
 
 # =============================================================================
+# Health check
+# =============================================================================
+
+class TestHealthCheck:
+    """The LLM check runs in the background, at most once at a time, and is cached."""
+
+    @pytest.fixture
+    def llm_check(self, monkeypatch):
+        """Replace the real (billed) LLM check with one the test controls."""
+        import threading
+
+        from agentds.web.api import webhooks
+
+        class FakeCheck:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.release = threading.Event()
+
+            def __call__(self, settings) -> bool:
+                self.calls += 1
+                # Blocks like a slow provider until the test releases it
+                assert self.release.wait(10), "check was never released"
+                return True
+
+        fake = FakeCheck()
+        monkeypatch.setattr(webhooks, "_check_llm", fake)
+        monkeypatch.setattr(webhooks, "_health_checks", {})
+        yield fake
+        fake.release.set()
+
+    @staticmethod
+    def wait_until(condition, timeout: float = 5.0) -> bool:
+        import time
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if condition():
+                return True
+            time.sleep(0.05)
+        return False
+
+    def test_health_answers_without_waiting_for_llm(self, llm_check, monkeypatch) -> None:
+        from litestar.testing import TestClient
+
+        from agentds.web.api import webhooks
+
+        with TestClient(app=webhooks.create_api()) as client:
+            # The check is stuck "talking to the provider", yet health answers
+            first = client.get("/api/health")
+            assert first.status_code == 200
+            assert first.json()["components"]["llm"] is False  # not confirmed yet
+            assert self.wait_until(lambda: llm_check.calls == 1)
+
+            # A second probe doesn't start another check while one is running
+            client.get("/api/health")
+            assert llm_check.calls == 1
+
+            llm_check.release.set()
+            assert self.wait_until(
+                lambda: client.get("/api/health").json()["components"]["llm"] is True
+            )
+
+            # Within the cache window, probes reuse the result
+            for _ in range(3):
+                assert client.get("/api/health").json()["status"] == "healthy"
+            assert llm_check.calls == 1
+
+            # Once the result is stale, the next probe refreshes it
+            webhooks._health_checks["llm"].ttl_seconds = 0.0
+            client.get("/api/health")
+            assert self.wait_until(lambda: llm_check.calls == 2)
+
+    def test_job_queue_reports_redis_ping(self, llm_check, monkeypatch) -> None:
+        """job_queue follows a Redis PING, checked in the background like the LLM."""
+        import threading
+        from unittest.mock import MagicMock
+
+        from litestar.testing import TestClient
+
+        from agentds.core.config import get_settings
+        from agentds.core.job_queue import JobQueue, RedisQueue
+        from agentds.web.api import webhooks
+
+        llm_check.release.set()
+        release_ping = threading.Event()
+        replies = {"value": False}
+
+        def ping() -> bool:
+            assert release_ping.wait(10), "ping was never released"
+            return replies["value"]
+
+        queue = JobQueue(get_settings())
+        queue._backend = MagicMock(spec=RedisQueue)
+        queue._backend.ping.side_effect = ping
+        monkeypatch.setattr(webhooks, "_job_queue", queue)
+
+        def job_queue_ok(client) -> bool:
+            return client.get("/api/health").json()["components"]["job_queue"]
+
+        with TestClient(app=webhooks.create_api()) as client:
+            # A hanging Redis doesn't hold up the probe
+            first = client.get("/api/health")
+            assert first.status_code == 200
+            assert first.json()["components"]["job_queue"] is False
+
+            release_ping.set()  # Redis answers, but reports failure
+            assert self.wait_until(lambda: queue._backend.ping.call_count >= 1)
+            assert job_queue_ok(client) is False
+            assert first.json()["status"] == "degraded"
+
+            replies["value"] = True  # Redis back
+            webhooks._health_checks["job_queue"].ttl_seconds = 0.0
+            assert self.wait_until(lambda: job_queue_ok(client) is True)
+
+    @pytest.fixture
+    def redis_ping(self, monkeypatch):
+        """A Redis-backed job queue whose PING the test controls."""
+        import threading
+        from unittest.mock import MagicMock
+
+        from agentds.core.config import get_settings
+        from agentds.core.job_queue import JobQueue, RedisQueue
+        from agentds.web.api import webhooks
+
+        class FakePing:
+            def __init__(self) -> None:
+                self.reply = True
+                self.release = threading.Event()
+                self.release.set()  # answers immediately unless the test holds it
+
+            def __call__(self) -> bool:
+                assert self.release.wait(10), "ping was never released"
+                return self.reply
+
+        fake = FakePing()
+        queue = JobQueue(get_settings())
+        queue._backend = MagicMock(spec=RedisQueue)
+        queue._backend.ping.side_effect = fake
+        fake.mock = queue._backend.ping
+        monkeypatch.setattr(webhooks, "_job_queue", queue)
+        yield fake
+        fake.release.set()
+
+    def test_liveness_checks_no_dependencies(self, llm_check, redis_ping) -> None:
+        """A hung Redis and a hung LLM don't fail liveness, and it starts neither check."""
+        import time
+
+        from litestar.testing import TestClient
+
+        from agentds.web.api import webhooks
+
+        redis_ping.release.clear()  # Redis hangs
+
+        with TestClient(app=webhooks.create_api()) as client:
+            started = time.monotonic()
+            for _ in range(3):
+                response = client.get("/api/health/live")  # no API key: exempt from auth
+                assert response.status_code == 200
+                assert response.json()["status"] == "alive"
+            assert time.monotonic() - started < 1.0
+
+            assert redis_ping.mock.call_count == 0
+            assert llm_check.calls == 0
+
+    def test_readiness_follows_redis_ping(self, llm_check, redis_ping) -> None:
+        from litestar.testing import TestClient
+
+        from agentds.web.api import webhooks
+
+        def ready(client) -> int:
+            return client.get("/api/health/ready").status_code
+
+        with TestClient(app=webhooks.create_api()) as client:
+            # A fast first ping is reported on the very first probe
+            first = client.get("/api/health/ready")  # no API key: exempt from auth
+            assert first.status_code == 200
+            assert first.json()["status"] == "ready"
+            assert first.json()["components"] == {"job_queue": True}
+
+            webhooks._health_checks["job_queue"].ttl_seconds = 0.0
+            redis_ping.reply = False  # Redis down
+            assert self.wait_until(lambda: ready(client) == 503)
+            response = client.get("/api/health/ready")
+            assert response.json()["status"] == "not_ready"
+            assert response.json()["components"] == {"job_queue": False}
+            assert client.get("/api/health/live").status_code == 200  # still alive
+
+            redis_ping.reply = True  # Redis back
+            assert self.wait_until(lambda: ready(client) == 200)
+
+            # Readiness never pays for an LLM check
+            assert llm_check.calls == 0
+
+    def test_readiness_is_not_ready_while_first_ping_hangs(self, llm_check, redis_ping) -> None:
+        import time
+
+        from litestar.testing import TestClient
+
+        from agentds.web.api import webhooks
+
+        redis_ping.release.clear()  # Redis hangs
+
+        with TestClient(app=webhooks.create_api()) as client:
+            started = time.monotonic()
+            response = client.get("/api/health/ready")
+            assert response.status_code == 503
+            assert time.monotonic() - started < 1.0  # inside the default k8s probe timeout
+
+            redis_ping.release.set()
+            assert self.wait_until(lambda: client.get("/api/health/ready").status_code == 200)
+            assert redis_ping.mock.call_count == 1  # probes didn't pile up checks
+
+    def test_first_connection_to_redis_does_not_block_liveness(self, llm_check, monkeypatch) -> None:
+        """Building the JobQueue can wait for Redis's socket timeout; liveness keeps answering."""
+        import threading
+        import time
+
+        from litestar.testing import TestClient
+
+        from agentds.core.config import get_settings
+        from agentds.core.job_queue import InMemoryQueue, JobQueue
+        from agentds.web.api import webhooks
+
+        connecting = threading.Event()
+        release = threading.Event()
+
+        def slow_init_backend(queue) -> None:
+            connecting.set()
+            assert release.wait(10), "connection was never released"
+            queue._backend = InMemoryQueue()
+
+        monkeypatch.setattr(JobQueue, "_init_backend", slow_init_backend)
+        monkeypatch.setattr(webhooks, "_job_queue", None)
+        monkeypatch.setattr(webhooks, "_settings", get_settings())
+
+        with TestClient(app=webhooks.create_api()) as client:
+            readiness: dict[str, int] = {}
+            probe = threading.Thread(
+                target=lambda: readiness.update(code=client.get("/api/health/ready").status_code)
+            )
+            probe.start()
+            try:
+                assert connecting.wait(5)
+                started = time.monotonic()
+                assert client.get("/api/health/live", timeout=2).status_code == 200
+                assert time.monotonic() - started < 1.0
+            finally:
+                release.set()
+                probe.join(10)
+            assert readiness["code"] == 200
+
+    def test_in_memory_job_queue_is_healthy(self, llm_check, monkeypatch) -> None:
+        from litestar.testing import TestClient
+
+        from agentds.core.config import Settings, get_settings
+        from agentds.core.job_queue import JobQueue
+        from agentds.web.api import webhooks
+
+        llm_check.release.set()
+        monkeypatch.setattr(Settings, "is_feature_enabled", lambda _self, _name: False)
+        monkeypatch.setattr(webhooks, "_job_queue", JobQueue(get_settings()))
+
+        with TestClient(app=webhooks.create_api()) as client:
+            client.get("/api/health")
+            assert self.wait_until(
+                lambda: client.get("/api/health").json()["components"]["job_queue"] is True
+            )
+
+
+class TestAgentRun:
+    """/api/agent/run runs the agent off the event loop."""
+
+    def test_other_requests_are_served_while_an_agent_runs(self, monkeypatch, tmp_path) -> None:
+        import threading
+
+        from litestar.testing import TestClient
+
+        from agentds.agents.base import AgentResult, AgentStatus, BaseAgent
+        from agentds.web.api import webhooks
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_run(self, context):
+            started.set()
+            assert release.wait(10), "agent was never released"
+            return AgentResult(
+                agent_name=self.__class__.__name__,
+                status=AgentStatus.COMPLETED,
+                outputs={"rows": 3},
+            )
+
+        monkeypatch.setattr(BaseAgent, "run", slow_run)
+        # Health would otherwise start a real LLM check in the background
+        monkeypatch.setattr(webhooks, "_check_llm", lambda _settings: True)
+        headers = {"X-API-Key": "test-key"}
+        result: dict = {}
+
+        with TestClient(app=webhooks.create_api()) as client:
+
+            def call_agent() -> None:
+                result["response"] = client.post(
+                    "/api/agent/run",
+                    json={"agent_name": "DataLoaderAgent", "data_source": str(tmp_path / "d.csv")},
+                    headers=headers,
+                )
+
+            caller = threading.Thread(target=call_agent)
+            caller.start()
+            try:
+                assert started.wait(10), "agent run never started"
+                # The agent is still running; the API must keep answering
+                health = client.get("/api/health", timeout=2)
+                assert health.status_code == 200
+            finally:
+                release.set()
+                caller.join(10)
+
+        response = result["response"]
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["agent"] == "DataLoaderAgent"
+        assert body["status"] == "completed"
+        assert body["outputs"] == {"rows": 3}
+
+    def test_unknown_agent_is_rejected(self) -> None:
+        from litestar.testing import TestClient
+
+        from agentds.web.api import webhooks
+
+        with TestClient(app=webhooks.create_api()) as client:
+            response = client.post(
+                "/api/agent/run",
+                json={"agent_name": "NoSuchAgent", "data_source": "x.csv"},
+                headers={"X-API-Key": "test-key"},
+            )
+        assert response.status_code == 400
+
+
+# =============================================================================
 # Run Tests
 # =============================================================================
 

@@ -22,7 +22,7 @@ Base URL: `http://localhost:8000/api`
 
 ### Authentication
 
-All API endpoints (except `/api/health` and `/api/docs`) require authentication via API key.
+All API endpoints (except the `/api/health` endpoints and `/api/docs`) require authentication via API key.
 
 **Header Authentication (Recommended):**
 ```http
@@ -71,13 +71,68 @@ X-RateLimit-Remaining: 58
 
 ---
 
-### Health Check
+### Health Checks
+
+Three endpoints, none of which needs an API key. All answer immediately: the
+dependency checks behind them run in the background, each one at a time, and
+the last result is reused until it is refreshed.
+
+#### Liveness
+
+```http
+GET /api/health/live
+```
+
+Always `200` while the process is serving requests. It checks no dependencies,
+so a Redis or LLM outage never gets a working process restarted. Use it for the
+Kubernetes `livenessProbe`.
+
+```json
+{
+  "status": "alive",
+  "timestamp": "2026-01-29T12:00:00Z"
+}
+```
+
+#### Readiness
+
+```http
+GET /api/health/ready
+```
+
+`200` when this instance can take work, `503` when it can't. Use it for the
+Kubernetes `readinessProbe` and the Docker Compose `healthcheck`.
+
+```json
+{
+  "status": "ready",
+  "timestamp": "2026-01-29T12:00:00Z",
+  "components": {
+    "job_queue": true
+  }
+}
+```
+
+When not ready, `status` is `not_ready`, `job_queue` is `false` and the
+response code is `503`.
+
+- `job_queue` is a Redis `PING`, refreshed every 10 seconds, when the Redis job
+  queue is in use. With the in-memory fallback it is always `true`.
+- Before the first check has finished, the endpoint waits up to 0.5 seconds for
+  it, so a healthy instance is ready on its first probe. If the check is still
+  running after that, the instance reports `503` until the check passes.
+- The LLM is not part of readiness. A provider outage affects every instance
+  alike, so taking them all out of service would turn it into a full API outage.
+
+#### Health Report
 
 ```http
 GET /api/health
 ```
 
-**Response:**
+The state of every component, for dashboards and people. Always `200`, even
+when `status` is `degraded`; use the endpoints above for probes.
+
 ```json
 {
   "status": "healthy",
@@ -90,6 +145,13 @@ GET /api/health
   }
 }
 ```
+
+- `job_queue`: the same Redis check as readiness.
+- `llm`: a call to the default model, refreshed every 5 minutes. Only this
+  endpoint starts it, so the probes don't pay for model calls.
+
+Each is `false` (and `status` is `degraded`) until its first check has passed,
+and while the last check failed.
 
 ---
 
@@ -110,15 +172,38 @@ Content-Type: application/json
 }
 ```
 
-**Response:**
+**Response when an RQ worker is running** (`202 Accepted`): the run is handed to
+the worker (`python -m rq.cli worker`, the `worker` service in docker-compose).
+Poll the status endpoint for progress.
 ```json
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "started",
-  "message": "Pipeline started successfully",
-  "created_at": "2026-01-29T12:00:00Z"
+  "status": "queued",
+  "message": "Pipeline queued for a worker; poll /api/pipeline/status/550e8400-e29b-41d4-a716-446655440000",
+  "created_at": "2026-01-29T12:00:00Z",
+  "current_agent": null,
+  "error": null
 }
 ```
+
+**Response without a worker** (`201 Created`): the API runs the pipeline itself,
+in a background thread, and replies once it completes, fails or pauses for
+review. `status` is `completed`, `failed`, `cancelled` or `awaiting_approval`.
+```json
+{
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "awaiting_approval",
+  "message": "Waiting for review of DataLoaderAgent",
+  "created_at": "2026-01-29T12:00:00Z",
+  "current_agent": "DataLoaderAgent",
+  "error": null
+}
+```
+
+Runs are handed to a worker only when the Redis job queue is in use and at least
+one worker is listening; otherwise they run in the API process.
+`PIPELINE_JOB_TIMEOUT` (seconds, default 21600) limits how long a worker may
+spend on one run or review action.
 
 #### Get Pipeline Status
 
@@ -174,12 +259,30 @@ Content-Type: application/json
 - `stop_pipeline` - Terminate pipeline
 - `rollback` - Return to previous checkpoint
 
-**Response:**
+The job must be waiting for review (status `paused`); otherwise the API returns
+`409 Conflict`. A paused run can be resumed by any API instance or worker, because
+its state is stored with the job.
+
+**Response when an RQ worker is running** (`202 Accepted`): poll the status endpoint.
+```json
+{
+  "status": "queued",
+  "action": "approve_and_continue",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "message": "Review action queued for a worker; poll /api/pipeline/status/550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Response without a worker** (`201 Created`):
 ```json
 {
   "status": "success",
   "action": "approve_and_continue",
-  "job_id": "550e8400-e29b-41d4-a716-446655440000"
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "pipeline_status": "awaiting_approval",
+  "current_agent": "DataCleaningAgent",
+  "message": "Waiting for review of DataCleaningAgent",
+  "error": null
 }
 ```
 

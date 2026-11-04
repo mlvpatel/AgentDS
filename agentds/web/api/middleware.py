@@ -237,6 +237,8 @@ class AuthenticationMiddleware(AbstractMiddleware):
     # Paths that don't require authentication
     EXEMPT_PATHS = {
         "/api/health",
+        "/api/health/live",
+        "/api/health/ready",
         "/api/docs",
         "/api/openapi.json",
         "/api/redoc",
@@ -273,7 +275,7 @@ class AuthenticationMiddleware(AbstractMiddleware):
             return
 
         # Create request object for easier access
-        request = Request(scope)
+        request: Request[Any, Any, Any] = Request(scope)
 
         # Extract and validate API key
         api_key = self.authenticator.extract_key(request)
