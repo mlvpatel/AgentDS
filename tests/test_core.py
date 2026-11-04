@@ -180,6 +180,24 @@ class TestJobQueue:
             assert importlib.util.find_spec(module) is not None, f"{module} is not installed"
 
 
+class TestPackaging:
+    """Packages the code imports directly must be declared, not arrive transitively."""
+
+    def test_direct_runtime_imports_are_declared(self):
+        import re
+        from importlib.metadata import requires
+
+        declared = {
+            re.split(r"[\s<>=!~\[;]", requirement, maxsplit=1)[0].lower()
+            for requirement in requires("agentds") or []
+            if "extra ==" not in requirement  # optional extras don't count
+        }
+
+        # click: the `agentds` CLI; redis and rq: the Redis job queue
+        for package in ("click", "redis", "rq"):
+            assert package in declared, f"{package} is imported but not declared in pyproject.toml"
+
+
 # =============================================================================
 # Artifact Store Tests
 # =============================================================================
