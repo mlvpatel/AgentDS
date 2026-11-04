@@ -171,6 +171,104 @@ class TestFeatureEngineerAgent:
 
 
 # =============================================================================
+# Data handoff between build agents
+# =============================================================================
+
+def _completed(name: str, **outputs: object) -> AgentResult:
+    return AgentResult(agent_name=name, status=AgentStatus.COMPLETED, outputs=dict(outputs))
+
+
+class TestDataHandoff:
+    """Agents read their input dataset from the nearest upstream agent that produced one."""
+
+    @pytest.fixture
+    def build_context(
+        self, agent_context: AgentContext, mock_settings: Settings, tmp_path: Path
+    ) -> AgentContext:
+        mock_settings.temp_dir = tmp_path / "temp"
+        mock_settings.temp_dir.mkdir()
+        return agent_context
+
+    def test_eda_passes_through_its_input_data_path(
+        self,
+        build_context: AgentContext,
+        mock_settings: Settings,
+        mock_llm_gateway: MagicMock,
+        mock_artifact_store: ArtifactStore,
+        sample_parquet_path: Path,
+    ):
+        build_context.previous_results = {
+            "DataCleaningAgent": _completed("DataCleaningAgent", data_path=str(sample_parquet_path)),
+        }
+        agent = EDACopilotAgent(
+            settings=mock_settings, llm_gateway=mock_llm_gateway, artifact_store=mock_artifact_store
+        )
+
+        result = agent.execute(build_context)
+
+        assert result.status == AgentStatus.COMPLETED, result.error
+        assert result.outputs["data_path"] == str(sample_parquet_path)
+
+    def test_feature_engineer_runs_after_eda_without_data_path(
+        self,
+        build_context: AgentContext,
+        mock_settings: Settings,
+        mock_llm_gateway: MagicMock,
+        mock_artifact_store: ArtifactStore,
+        sample_parquet_path: Path,
+    ):
+        # Results as an EDA agent from before the fix would leave them: no data_path.
+        build_context.previous_results = {
+            "DataLoaderAgent": _completed("DataLoaderAgent", data_path="/missing/raw.parquet"),
+            "DataCleaningAgent": _completed("DataCleaningAgent", data_path=str(sample_parquet_path)),
+            "EDACopilotAgent": _completed("EDACopilotAgent", statistics={}),
+        }
+        agent = FeatureEngineerAgent(
+            settings=mock_settings, llm_gateway=mock_llm_gateway, artifact_store=mock_artifact_store
+        )
+
+        result = agent.execute(build_context)
+
+        assert result.status == AgentStatus.COMPLETED, result.error
+
+    def test_resolve_data_path_prefers_nearest_upstream(self, agent_context: AgentContext):
+        agent_context.previous_results = {
+            "DataCleaningAgent": _completed("DataCleaningAgent", data_path="clean.parquet"),
+            "EDACopilotAgent": _completed("EDACopilotAgent", data_path="eda.parquet"),
+        }
+
+        path = FeatureEngineerAgent.resolve_data_path(
+            agent_context, "EDACopilotAgent", "DataCleaningAgent"
+        )
+
+        assert path == "eda.parquet"
+
+    def test_resolve_data_path_skips_failed_results(self, agent_context: AgentContext):
+        failed = _completed("DataCleaningAgent", data_path="partial.parquet")
+        failed.status = AgentStatus.FAILED
+        agent_context.previous_results = {
+            "DataLoaderAgent": _completed("DataLoaderAgent", data_path="raw.parquet"),
+            "DataCleaningAgent": failed,
+        }
+
+        path = FeatureEngineerAgent.resolve_data_path(
+            agent_context, "DataCleaningAgent", "DataLoaderAgent"
+        )
+
+        assert path == "raw.parquet"
+
+    def test_resolve_data_path_names_agents_when_none_found(self, agent_context: AgentContext):
+        agent_context.previous_results = {
+            "EDACopilotAgent": _completed("EDACopilotAgent", statistics={}),
+        }
+
+        with pytest.raises(ValueError, match="EDACopilotAgent, DataLoaderAgent"):
+            FeatureEngineerAgent.resolve_data_path(
+                agent_context, "EDACopilotAgent", "DataLoaderAgent"
+            )
+
+
+# =============================================================================
 # AutoMLAgent Tests
 # =============================================================================
 

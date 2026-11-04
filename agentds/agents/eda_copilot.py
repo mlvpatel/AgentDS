@@ -95,17 +95,8 @@ Be specific and actionable in your insights. Focus on what matters for the ML ta
         )
 
         try:
-            # Get input data from previous agent
-            prev_result = context.previous_results.get("DataCleaningAgent")
-            if not prev_result:
-                # Try DataLoaderAgent if cleaning was skipped
-                prev_result = context.previous_results.get("DataLoaderAgent")
-            if not prev_result:
-                raise ValueError("No input data from previous agent")
-
-            data_path = prev_result.outputs.get("data_path")
-            if not data_path:
-                raise ValueError("No data_path in previous output")
+            # Get input data (falls back to DataLoaderAgent if cleaning was skipped)
+            data_path = self.resolve_data_path(context, "DataCleaningAgent", "DataLoaderAgent")
 
             # Load data
             df = pl.read_parquet(data_path)
@@ -140,6 +131,9 @@ Be specific and actionable in your insights. Focus on what matters for the ML ta
             )
 
             result.outputs = {
+                # EDA doesn't change the data; pass the dataset through so the
+                # next agent can read it from this result.
+                "data_path": data_path,
                 "dashboard_path": Path(context.settings.output_dir) / context.job_id / self.name / "eda_dashboard.html",
                 "dashboard_artifact_id": dashboard_artifact,
                 "insights_artifact_id": insights_artifact,
