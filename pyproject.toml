@@ -140,7 +140,6 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/*" = ["ARG001", "S101", "ARG002"]
-"agentds/agents/api_wrapper.py" = ["F821"]  # False positive on list comprehension variable
 
 [tool.mypy]
 python_version = "3.10"
@@ -159,7 +158,7 @@ module = [
     "agentds.workflows.*",
     "agentds.integrations.*"
 ]
-disable_error_code = ["no-any-return", "arg-type", "assignment", "return-value", "attr-defined", "index", "operator", "misc", "list-item", "typeddict-item", "no-untyped-def", "name-defined", "import-untyped"]
+disable_error_code = ["no-any-return", "arg-type", "assignment", "return-value", "attr-defined", "index", "operator", "misc", "list-item", "typeddict-item", "no-untyped-def", "import-untyped"]
 
 [[tool.mypy.overrides]]
 module = "agentds.cli"

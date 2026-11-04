@@ -302,6 +302,60 @@ class TestAPIWrapperAgent:
         prompt = agent.get_system_prompt()
         assert "APIWrapperAgent" in prompt
 
+    @pytest.mark.parametrize(
+        ("task_type", "expected"),
+        [("classification", 1), ("regression", 1.5)],
+    )
+    def test_generated_api_serves_predictions(
+        self,
+        mock_settings: Settings,
+        tmp_path: Path,
+        task_type: str,
+        expected: float,
+    ):
+        """The generated app.py imports, and its endpoints build input from the request."""
+        import importlib.util
+        import sys
+
+        from litestar.testing import TestClient
+
+        agent = APIWrapperAgent(settings=mock_settings)
+        code = agent._generate_api_code({}, ["tenure", "monthly_charges"], task_type)
+
+        app_file = tmp_path / "generated_app.py"
+        app_file.write_text(code)
+        spec = importlib.util.spec_from_file_location("generated_app", app_file)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["generated_app"] = module
+        try:
+            spec.loader.exec_module(module)
+
+            class StubModel:
+                def __init__(self) -> None:
+                    self.columns: list[list[str]] = []
+
+                def predict(self, features):
+                    self.columns.append(list(features.columns))
+                    return [expected]
+
+            stub = StubModel()
+            module._model = stub
+
+            with TestClient(app=module.app) as client:
+                single = client.post("/predict", json={"tenure": 3, "monthly_charges": 20.5})
+                batch = client.post(
+                    "/predict/batch",
+                    json={"instances": [{"tenure": 1, "monthly_charges": 9.0}]},
+                )
+        finally:
+            sys.modules.pop("generated_app", None)
+
+        assert single.status_code == 201, single.text
+        assert single.json()["prediction"] == expected
+        assert batch.status_code == 201, batch.text
+        assert batch.json()["predictions"][0]["prediction"] == expected
+        assert stub.columns == [["tenure", "monthly_charges"]] * 2
+
 
 # =============================================================================
 # DevOpsAgent Tests
