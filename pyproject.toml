@@ -63,6 +63,7 @@ dependencies = [
     "httpx>=0.28.0",
     # Infrastructure
     "redis>=5.2.0",
+    "rq>=2.0.0",
     # Utilities
     "pydantic>=2.10.0",
     "pydantic-settings>=2.2.0",

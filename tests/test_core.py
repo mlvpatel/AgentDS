@@ -168,6 +168,17 @@ class TestJobQueue:
         assert job.progress_percent == 20.0
         assert job.current_agent == "TestAgent"
 
+    def test_redis_backend_dependencies_are_installed(self):
+        """A normal install provides everything RedisQueue imports.
+
+        Without rq, RedisQueue fails to import and JobQueue silently falls
+        back to the in-memory queue even when Redis is reachable.
+        """
+        import importlib.util
+
+        for module in ("redis", "rq"):
+            assert importlib.util.find_spec(module) is not None, f"{module} is not installed"
+
 
 # =============================================================================
 # Artifact Store Tests

@@ -19,7 +19,7 @@
 - `pytest`: 169 passed, 15 deselected (the default `addopts` excludes LLM and integration tests). Coverage is 42% overall; `pipeline.py` 26%, `web/app.py` 10%, `cli.py` 0%.
 - `mypy agentds/` reports 2 errors with current dependency versions (`middleware.py:276`, `pipeline.py:621`), so the CI type-check job fails on a fresh install.
 
-> **Follow-up on this branch:** commit `d6703cd` fixes the pipeline routing and human-in-the-loop bugs (master items 1–4, plus partial fixes for items 5, 20 and 23). Later commits fix the EDA → FeatureEngineer handoff (item 15), the APIWrapper template (item 13) and generated-API column names (item 14). Each item's status is shown in the **Status** column below. All other items are still open.
+> **Follow-up on this branch:** commit `d6703cd` fixes the pipeline routing and human-in-the-loop bugs (master items 1–4, plus partial fixes for items 5, 20 and 23). Later commits fix the EDA → FeatureEngineer handoff (item 15), the APIWrapper template (item 13), generated-API column names (item 14) and the `rq` dependency (item 24). Each item's status is shown in the **Status** column below. All other items are still open.
 
 ---
 
@@ -78,7 +78,7 @@ Deduplicated across lenses and ordered by severity.
 | 21 | Quick-start docs fail: the README snippet calls `run(task=…)`, the `PipelineConfig` import fails, 8 of 10 agents can't run alone via `agentds agent`, pre-commit isn't configured, and there is no `develop` branch | DX C1, C7, C8, C9; Repo R3, R4, R11 | `README.md:129-135`; `agentds/__init__.py`; `cli.py:128-167`; `CONTRIBUTING.md` | First-run failure on every documented path | Fix the docs and exports; add a docs-snippet smoke test | Open |
 | 22 | The Configuration tab collects API keys and silently discards them | UX U4, Prod N7 | `app.py:196-232` | Users think keys are set; secrets typed into a no-op field | Remove the tab, or wire it with clear "this session" feedback | Open |
 | 23 | Fake progress: the UI blocked for the whole run, then replayed a `time.sleep(0.5)` animation | UX U5, Frontend F3, Perf R7 | `app.py:297-323` | No real feedback during long runs | Stream LangGraph node events from a worker | **Partly fixed**: the fake loop is removed and the UI shows "Running…" plus the real result; still no streaming |
-| 24 | `rq` is not a declared dependency, so the Redis queue silently falls back to memory **[runtime-verified: `import rq` fails after `pip install -e .[dev]`]** | Structural C1, Repo R5, UX | `pyproject.toml`; `job_queue.py:200-201, 293-298` | Jobs never persist or show up across processes | Declare `rq` (or drop RQ) and fail loudly | Open |
+| 24 | `rq` is not a declared dependency, so the Redis queue silently falls back to memory **[runtime-verified: `import rq` fails after `pip install -e .[dev]`]** | Structural C1, Repo R5, UX | `pyproject.toml`; `job_queue.py:200-201, 293-298` | Jobs never persist or show up across processes | Declare `rq` (or drop RQ) and fail loudly | **Fixed** on this branch: `rq` declared in `pyproject.toml`; Redis backend verified with a live Redis (fallback warning wording unchanged) |
 
 ## Cross-Cutting Concerns
 
