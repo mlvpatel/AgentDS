@@ -280,15 +280,23 @@ Provide input/output schema and endpoint configuration as JSON.
         # column name, so requests use the real column names and the model
         # receives a DataFrame with the columns it was trained on. Names are
         # emitted with repr() so any characters produce a valid string literal.
+        # Every field is optional: an omitted or null value is passed to the
+        # preprocessing pipeline as missing, for its imputers to fill.
         columns = [str(name) for name in feature_names[:50]]
         categorical = {str(name) for name in categorical_features}
         input_fields = [
-            f"    {ident}: {'str' if column in categorical else 'float'} = Field(..., "
-            f"alias={column!r}, description={'Feature ' + column!r})"
+            f"    {ident}: Optional[{'str' if column in categorical else 'float'}] = Field("
+            f"None, alias={column!r}, description={'Feature ' + column!r})"
             for ident, column in zip(self._field_identifiers(columns), columns, strict=True)
         ]
+        numeric_columns = [column for column in columns if column not in categorical]
 
-        input_fields_str = "\n".join(input_fields) if input_fields else "    value: float = Field(..., description=\"Input value\")"
+        if not input_fields:
+            input_fields = ['    value: Optional[float] = Field(None, description="Input value")']
+            numeric_columns = ["value"]
+
+        input_fields_str = "\n".join(input_fields)
+        numeric_columns_literal = repr(numeric_columns)
 
         code = f'''"""
 AgentDS Generated API Server.
@@ -366,6 +374,9 @@ class ErrorResponse(BaseModel):
 MODEL_PATH = Path("model/model.pkl")
 PIPELINE_PATH = Path("model/preprocessing_pipeline.pkl")
 
+# Input columns that hold numbers; all others hold categories
+NUMERIC_COLUMNS = {numeric_columns_literal}
+
 _model = None
 _pipeline = None
 
@@ -399,11 +410,15 @@ def prepare_features(instance: PredictionInput, label: str = "input") -> Any:
     """Build the model input for one instance.
 
     Creates a one-row DataFrame keyed by the original column names and applies
-    the preprocessing pipeline when one is loaded. If preprocessing fails, the
-    request is rejected with 422 instead of sending unprocessed features to the
-    model, which would return a confident but meaningless prediction.
+    the preprocessing pipeline when one is loaded. Missing inputs arrive as
+    None and are converted to NaN, the marker scikit-learn imputers look for.
+    If preprocessing fails, the request is rejected with 422 instead of sending
+    unprocessed features to the model, which would return a confident but
+    meaningless prediction.
     """
     features = pd.DataFrame([instance.model_dump(by_alias=True)])
+    features = features.astype(dict.fromkeys(NUMERIC_COLUMNS, "float64"))
+    features = features.where(features.notna(), np.nan)
     pipeline = get_pipeline()
     if pipeline is None:
         return features

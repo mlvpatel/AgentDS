@@ -334,8 +334,11 @@ class TestAPIWrapperAgent:
                 self.rows: list[dict] = []
 
             def predict(self, frame):
-                self.columns.append(list(frame.columns))
-                self.rows.append(frame.iloc[0].to_dict())
+                if hasattr(frame, "columns"):
+                    self.columns.append(list(frame.columns))
+                    self.rows.append(frame.iloc[0].to_dict())
+                else:  # a transformed array from a real pipeline
+                    self.rows.append({"values": [float(v) for v in frame[0]]})
                 return [prediction]
 
         stub = StubModel()
@@ -449,6 +452,74 @@ class TestAPIWrapperAgent:
         assert batch.status_code == 201, batch.text
         assert rows == [{"tenure": 3.0, "plan type": "gold"}] * 2
 
+    def test_generated_api_accepts_missing_values(
+        self, mock_settings: Settings, tmp_path: Path
+    ):
+        """Omitted or null inputs reach the pipeline as NaN, which imputers fill."""
+        import math
+
+        (omitted, nulls, batch), _columns, rows = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            ["tenure", "plan"],
+            "classification",
+            1,
+            [
+                ("/predict", {"plan": "gold"}),
+                ("/predict", {"tenure": None, "plan": None}),
+                ("/predict/batch", {"instances": [{"tenure": 4}]}),
+            ],
+            categorical=("plan",),
+        )
+
+        assert omitted.status_code == 201, omitted.text
+        assert nulls.status_code == 201, nulls.text
+        assert batch.status_code == 201, batch.text
+
+        def is_nan(value: object) -> bool:
+            return isinstance(value, float) and math.isnan(value)
+
+        assert is_nan(rows[0]["tenure"]) and rows[0]["plan"] == "gold"
+        assert is_nan(rows[1]["tenure"]) and is_nan(rows[1]["plan"])
+        assert rows[2]["tenure"] == 4.0 and is_nan(rows[2]["plan"])
+
+    def test_generated_api_missing_values_are_imputed_by_real_pipeline(
+        self, mock_settings: Settings, tmp_path: Path
+    ):
+        """A fitted scikit-learn pipeline fills the gaps; the model gets no NaN."""
+        import math
+
+        import pandas as pd
+        from sklearn.compose import ColumnTransformer
+        from sklearn.impute import SimpleImputer
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import OneHotEncoder
+
+        train = pd.DataFrame({"tenure": [1.0, 2.0, 3.0], "plan": ["a", "b", "a"]})
+        pipeline = ColumnTransformer([
+            ("numeric", SimpleImputer(strategy="mean"), ["tenure"]),
+            ("categorical", Pipeline([
+                ("imputer", SimpleImputer(strategy="constant", fill_value="missing")),
+                ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+            ]), ["plan"]),
+        ]).fit(train)
+
+        (response,), _columns, rows = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            ["tenure", "plan"],
+            "classification",
+            1,
+            [("/predict", {"tenure": None})],
+            categorical=("plan",),
+            pipeline=pipeline,
+        )
+
+        assert response.status_code == 201, response.text
+        values = rows[0]["values"]
+        assert values[0] == 2.0  # mean of the training tenure
+        assert not any(math.isnan(v) for v in values)
+
     def test_generated_api_reports_preprocessing_errors(
         self, mock_settings: Settings, tmp_path: Path
     ):
@@ -523,8 +594,8 @@ class TestAPIWrapperAgent:
 
         assert result.status == AgentStatus.COMPLETED, result.error
         code = mock_artifact_store.load_text(result.outputs["api_code_artifact_id"])
-        assert "    tenure: float = Field(..., alias='tenure'" in code
-        assert "    plan: str = Field(..., alias='plan'" in code
+        assert "    tenure: Optional[float] = Field(None, alias='tenure'" in code
+        assert "    plan: Optional[str] = Field(None, alias='plan'" in code
         assert "alias='churned'" not in code
         schema = result.outputs["api_config"]["input_schema"]
         assert schema["tenure"]["type"] == "float"
