@@ -727,6 +727,8 @@ def create_api(settings: Settings | None = None) -> Litestar:
     Returns:
         Configured Litestar application with auth and rate limiting
     """
+    from litestar.middleware import DefineMiddleware
+
     from agentds.web.api.middleware import (
         AuthenticationMiddleware,
         RateLimitMiddleware,
@@ -746,9 +748,10 @@ def create_api(settings: Settings | None = None) -> Litestar:
             version="1.0.0",
             description="REST API for AgentDS multi-agent data science pipeline",
         ),
+        # Pass the app's settings on, so API keys and rate limits come from them
         middleware=[
-            AuthenticationMiddleware,
-            RateLimitMiddleware,
+            DefineMiddleware(AuthenticationMiddleware, settings=settings),
+            DefineMiddleware(RateLimitMiddleware, settings=settings),
         ],
     )
 

@@ -251,8 +251,9 @@ class TestAPIAuthentication:
     def test_protected_endpoint_without_key(self, secure_client) -> None:
         """Test protected endpoint without API key."""
         response = secure_client.get("/api/jobs")
-        # Accept 401 or 500 (middleware may fail in test env)
-        assert response.status_code in [401, 500]
+        assert response.status_code == 401
+        assert response.json()["error"] == "INVALID_API_KEY"
+        assert response.headers["WWW-Authenticate"] == "ApiKey"
 
     def test_protected_endpoint_with_invalid_key(self, secure_client) -> None:
         """Test protected endpoint with invalid API key."""
@@ -260,8 +261,7 @@ class TestAPIAuthentication:
             "/api/jobs",
             headers={"X-API-Key": "invalid-key"},
         )
-        # Accept 401 or 200 (dev mode fallback) or 500
-        assert response.status_code in [200, 401, 500]
+        assert response.status_code == 401
 
     def test_protected_endpoint_with_valid_key(self, secure_client) -> None:
         """Test protected endpoint with valid API key."""
@@ -269,8 +269,7 @@ class TestAPIAuthentication:
             "/api/jobs",
             headers={"X-API-Key": "valid-api-key"},
         )
-        # Accept 200 or 500 (if job queue fails)
-        assert response.status_code in [200, 500]
+        assert response.status_code != 401
 
 
 @pytest.mark.integration
@@ -301,7 +300,7 @@ class TestAPIRateLimiting:
 
     def test_rate_limit_headers(self, rate_limited_client) -> None:
         """Test rate limit headers in response."""
-        response = rate_limited_client.get("/api/health")
+        response = rate_limited_client.get("/api/health/live")
         # Health is exempt from auth but should still have rate limit headers
         # Note: Headers may or may not be present depending on middleware order
         assert response.status_code == 200
@@ -310,18 +309,72 @@ class TestAPIRateLimiting:
         """Test rate limit exceeded response."""
         # Make requests until rate limited
         # Note: burst_size is 2x rate, so need to exceed that
-        for _ in range(20):
-            response = rate_limited_client.get("/api/health")
-            if response.status_code == 429:
-                # Rate limited
-                data = response.json()
-                assert "RATE_LIMIT" in data.get("error", "")
-                assert "retry_after_seconds" in data
-                return
+        codes = [rate_limited_client.get("/api/health/live").status_code for _ in range(20)]
+        assert 429 in codes, codes
+        assert set(codes) == {200, 429}
 
-        # If we get here, rate limiting didn't trigger
-        # This could happen if burst_size is higher
-        pass
+        response = rate_limited_client.get("/api/health/live")
+        assert response.status_code == 429
+        data = response.json()
+        assert data["error"] == "RATE_LIMIT_EXCEEDED"
+        assert "retry_after_seconds" in data
+        assert int(response.headers["Retry-After"]) >= 0
+
+
+class TestMiddlewareRejections:
+    """Rejected requests get their real status code, not a 500.
+
+    Runs in the default suite; the integration-marked classes above cover the
+    same ground more broadly.
+    """
+
+    @staticmethod
+    def client(**overrides):
+        from litestar.testing import TestClient
+
+        from agentds.core.config import Settings
+        from agentds.web.api.webhooks import create_api
+
+        settings = Settings(environment="test", **overrides)
+        return TestClient(app=create_api(settings=settings))
+
+    def test_missing_or_wrong_api_key_is_401(self) -> None:
+        with self.client(api_keys=["right-key"], rate_limit_per_minute=1000) as client:
+            for headers in ({}, {"X-API-Key": "wrong-key"}):
+                response = client.get("/api/jobs", headers=headers)
+                assert response.status_code == 401
+                assert response.headers["content-type"].startswith("application/json")
+                assert response.headers["WWW-Authenticate"] == "ApiKey"
+                assert response.json()["error"] == "INVALID_API_KEY"
+
+            assert client.get("/api/jobs", headers={"X-API-Key": "right-key"}).status_code != 401
+
+    def test_no_configured_keys_allows_requests_without_a_key(self) -> None:
+        with self.client(api_keys=[], rate_limit_per_minute=1000) as client:
+            assert client.get("/api/jobs").status_code != 401
+
+    def test_app_settings_reach_the_middleware(self, monkeypatch) -> None:
+        """Keys passed to create_api apply, not whatever get_settings() returns."""
+        from agentds.core.config import Settings
+        from agentds.web.api import middleware
+
+        monkeypatch.setattr(middleware, "get_settings", lambda: Settings(api_keys=["global-key"]))
+        with self.client(api_keys=["app-key"], rate_limit_per_minute=1000) as client:
+            assert client.get("/api/jobs", headers={"X-API-Key": "app-key"}).status_code != 401
+            assert client.get("/api/jobs", headers={"X-API-Key": "global-key"}).status_code == 401
+
+    def test_over_the_rate_limit_is_429(self) -> None:
+        with self.client(api_keys=[], rate_limit_per_minute=1) as client:
+            codes = [client.get("/api/health/live").status_code for _ in range(10)]
+            assert codes[0] == 200
+            assert codes[-1] == 429
+            assert set(codes) == {200, 429}
+
+            response = client.get("/api/health/live")
+            assert response.status_code == 429
+            assert response.json()["error"] == "RATE_LIMIT_EXCEEDED"
+            assert int(response.headers["Retry-After"]) >= 1
+            assert response.headers["X-RateLimit-Remaining"] == "0"
 
 
 # =============================================================================
