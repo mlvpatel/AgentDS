@@ -24,8 +24,10 @@ jobs:
       - name: Upgrade pip
         run: pip install --upgrade pip setuptools wheel
 
-      - name: Install Ruff
-        run: pip install ruff
+      - name: Install Ruff (version pinned in pyproject.toml dev extras)
+        run: |
+          RUFF_SPEC=$(python -c "import tomllib; print(next(d for d in tomllib.load(open('pyproject.toml', 'rb'))['project']['optional-dependencies']['dev'] if d.startswith('ruff')))")
+          pip install "$RUFF_SPEC"
 
       - name: Run Ruff
         run: ruff check .
