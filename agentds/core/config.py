@@ -9,13 +9,14 @@ Author: Malav Patel
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import yaml
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class LLMSettings(BaseSettings):
@@ -238,7 +239,10 @@ class Settings(BaseSettings):
 
     # Security
     api_key_header: str = Field(default="X-API-Key")
-    api_keys: list[str] = Field(default_factory=list)
+    # NoDecode: pydantic-settings would otherwise parse an environment value
+    # as JSON before parse_api_keys runs, so the documented comma-separated
+    # form (API_KEYS=key1,key2) crashed Settings()
+    api_keys: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # Rate limiting
     rate_limit_per_minute: int = Field(default=60)
@@ -265,9 +269,18 @@ class Settings(BaseSettings):
     @field_validator("api_keys", mode="before")
     @classmethod
     def parse_api_keys(cls, v: Any) -> list[str]:
-        """Parse API keys from comma-separated string."""
+        """Parse API keys from a comma-separated string or a JSON list."""
         if isinstance(v, str):
-            return [k.strip() for k in v.split(",") if k.strip()]
+            text = v.strip()
+            if text.startswith("["):
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"API_KEYS looks like a JSON list but isn't valid JSON: {e}") from e
+                if not isinstance(parsed, list):
+                    raise ValueError("API_KEYS must be a list of keys")
+                return [str(k).strip() for k in parsed if str(k).strip()]
+            return [k.strip() for k in text.split(",") if k.strip()]
         return v or []
 
     @model_validator(mode="after")

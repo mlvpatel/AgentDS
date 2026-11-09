@@ -44,6 +44,40 @@ class TestSettings:
         settings = Settings(api_keys="key1,key2,key3")
         assert settings.api_keys == ["key1", "key2", "key3"]
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("key1,key2,key3", ["key1", "key2", "key3"]),  # documented form
+            (" key1 , key2 ,", ["key1", "key2"]),
+            ("single-key", ["single-key"]),
+            ('["key1", "key2"]', ["key1", "key2"]),  # JSON list still works
+            ("", []),
+        ],
+    )
+    def test_api_keys_from_environment(self, monkeypatch, value, expected):
+        """API_KEYS set in the environment, as .env.example documents, loads."""
+        from agentds.core.config import Settings
+
+        monkeypatch.setenv("API_KEYS", value)
+        assert Settings().api_keys == expected
+
+    def test_api_keys_from_env_file(self, tmp_path, monkeypatch):
+        from agentds.core.config import Settings
+
+        monkeypatch.delenv("API_KEYS", raising=False)
+        env_file = tmp_path / ".env"
+        env_file.write_text("API_KEYS=key1,key2\n")
+        assert Settings(_env_file=env_file).api_keys == ["key1", "key2"]
+
+    def test_api_keys_rejects_malformed_json(self, monkeypatch):
+        from pydantic import ValidationError
+
+        from agentds.core.config import Settings
+
+        monkeypatch.setenv("API_KEYS", '["key1", ')
+        with pytest.raises(ValidationError, match="API_KEYS"):
+            Settings()
+
     def test_llm_settings(self):
         """Test LLM settings."""
         from agentds.core.config import LLMSettings
