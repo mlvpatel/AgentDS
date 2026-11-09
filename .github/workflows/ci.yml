@@ -24,10 +24,10 @@ jobs:
       - name: Upgrade pip
         run: pip install --upgrade pip setuptools wheel
 
-      # Pinned so a new ruff release can't turn CI red on unchanged code;
-      # bump it deliberately and fix any new findings in the same change
-      - name: Install Ruff
-        run: pip install "ruff==0.17.4"
+      - name: Install Ruff (version pinned in pyproject.toml dev extras)
+        run: |
+          RUFF_SPEC=$(python -c "import tomllib; print(next(d for d in tomllib.load(open('pyproject.toml', 'rb'))['project']['optional-dependencies']['dev'] if d.startswith('ruff')))")
+          pip install "$RUFF_SPEC"
 
       - name: Run Ruff
         run: ruff check .
