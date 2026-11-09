@@ -359,24 +359,23 @@ Be conservative - only suggest operations that are clearly needed.
                                     "fill_value": str(mode_val),
                                 })
 
-                elif operation == "remove_outliers":
-                    if target != "all" and target in df.columns:
-                        col = target
-                        if df[col].dtype in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]:
-                            q1 = df[col].quantile(0.25)
-                            q3 = df[col].quantile(0.75)
-                            iqr = q3 - q1
-                            lower = q1 - 1.5 * iqr
-                            upper = q3 + 1.5 * iqr
-                            before = df.height
-                            df = df.filter(
-                                (pl.col(col) >= lower) & (pl.col(col) <= upper)
-                            )
-                            operations_applied.append({
-                                "operation": f"remove_outliers_{col}",
-                                "rows_affected": before - df.height,
-                                "bounds": [lower, upper],
-                            })
+                elif operation == "remove_outliers" and target != "all" and target in df.columns:
+                    col = target
+                    if df[col].dtype in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]:
+                        q1 = df[col].quantile(0.25)
+                        q3 = df[col].quantile(0.75)
+                        iqr = q3 - q1
+                        lower = q1 - 1.5 * iqr
+                        upper = q3 + 1.5 * iqr
+                        before = df.height
+                        df = df.filter(
+                            (pl.col(col) >= lower) & (pl.col(col) <= upper)
+                        )
+                        operations_applied.append({
+                            "operation": f"remove_outliers_{col}",
+                            "rows_affected": before - df.height,
+                            "bounds": [lower, upper],
+                        })
 
             except Exception as e:
                 logger.warning(

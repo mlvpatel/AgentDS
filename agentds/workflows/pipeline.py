@@ -14,6 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
@@ -604,7 +605,7 @@ class AgentDSPipeline:
         compiled = self._graph.compile(checkpointer=self._checkpointer)
 
         # Get current state
-        config = {"configurable": {"thread_id": job_id}}
+        config: RunnableConfig = {"configurable": {"thread_id": job_id}}
         state = compiled.get_state(config)
 
         if not state:
