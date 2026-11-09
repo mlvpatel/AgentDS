@@ -483,7 +483,13 @@ class TestHealthCheck:
     def test_health_answers_without_waiting_for_llm(self, llm_check, monkeypatch) -> None:
         from litestar.testing import TestClient
 
+        from agentds.core.config import Settings, get_settings
+        from agentds.core.job_queue import JobQueue
         from agentds.web.api import webhooks
+
+        # A deliberately in-memory queue (Redis queue off), so only the LLM matters
+        monkeypatch.setattr(Settings, "is_feature_enabled", lambda _self, _name: False)
+        monkeypatch.setattr(webhooks, "_job_queue", JobQueue(get_settings()))
 
         with TestClient(app=webhooks.create_api()) as client:
             # The check is stuck "talking to the provider", yet health answers
@@ -671,6 +677,8 @@ class TestHealthCheck:
             queue._backend = InMemoryQueue()
 
         monkeypatch.setattr(JobQueue, "_init_backend", slow_init_backend)
+        # The slow connection ends on a deliberate in-memory queue (Redis queue off)
+        monkeypatch.setattr(Settings, "is_feature_enabled", lambda _self, _name: False)
         monkeypatch.setattr(webhooks, "_job_queue", None)
         monkeypatch.setattr(webhooks, "_settings", get_settings())
 
@@ -689,6 +697,44 @@ class TestHealthCheck:
                 release.set()
                 probe.join(10)
             assert readiness["code"] == 200
+
+    def test_readiness_fails_on_redis_fallback_until_redis_returns(self, llm_check, monkeypatch) -> None:
+        """Redis unreachable at startup: not ready (503), then ready once it reconnects."""
+        from litestar.testing import TestClient
+
+        from agentds.core import job_queue as jq
+        from agentds.core.config import Settings, get_settings
+        from agentds.web.api import webhooks
+
+        class FakeRedisQueue:
+            reachable = False
+
+            def __init__(self, url, socket_timeout=None):
+                pass
+
+            def ping(self):
+                return FakeRedisQueue.reachable
+
+            def store(self, job):
+                pass
+
+        llm_check.release.set()
+        monkeypatch.setattr(jq, "RedisQueue", FakeRedisQueue)
+        monkeypatch.setattr(Settings, "is_feature_enabled", lambda _self, name: name == "redis_queue")
+        queue = jq.JobQueue(get_settings())
+        assert queue.using_fallback is True
+        monkeypatch.setattr(webhooks, "_job_queue", queue)
+
+        with TestClient(app=webhooks.create_api()) as client:
+            response = client.get("/api/health/ready")
+            assert response.status_code == 503
+            assert response.json()["components"] == {"job_queue": False}
+            assert client.get("/api/health/live").status_code == 200
+
+            FakeRedisQueue.reachable = True
+            webhooks._health_checks["job_queue"].ttl_seconds = 0.0
+            assert self.wait_until(lambda: client.get("/api/health/ready").status_code == 200)
+            assert queue.using_fallback is False
 
     def test_in_memory_job_queue_is_healthy(self, llm_check, monkeypatch) -> None:
         from litestar.testing import TestClient

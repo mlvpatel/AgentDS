@@ -189,12 +189,54 @@ class TestJobQueue:
         assert kwargs["socket_timeout"] == 2
         assert kwargs["socket_connect_timeout"] == 2
 
-    def test_in_memory_queue_ping_is_true(self):
+    def test_in_memory_queue_ping_is_true_when_redis_queue_is_disabled(self, monkeypatch):
+        """With the Redis queue turned off, the in-memory queue is the intended backend."""
+        from agentds.core.config import Settings
         from agentds.core.job_queue import InMemoryQueue, JobQueue
 
-        queue = JobQueue.__new__(JobQueue)
-        queue._backend = InMemoryQueue()
+        monkeypatch.setattr(Settings, "is_feature_enabled", lambda _self, _name: False)
+        queue = JobQueue(Settings())
+        assert isinstance(queue._backend, InMemoryQueue)
+        assert queue.using_fallback is False
         assert queue.ping() is True
+
+    def test_redis_fallback_is_unhealthy_until_redis_returns(self, monkeypatch):
+        """Redis unreachable at startup: ping is False, then the queue moves to Redis."""
+        from agentds.core import job_queue as jq
+        from agentds.core.config import Settings
+
+        class FakeRedisQueue:
+            reachable = False
+            stored: dict = {}
+
+            def __init__(self, url, socket_timeout=None):
+                pass
+
+            def ping(self):
+                return FakeRedisQueue.reachable
+
+            def store(self, job):
+                FakeRedisQueue.stored[job.id] = job
+
+            def get_job(self, job_id):
+                return FakeRedisQueue.stored.get(job_id)
+
+        monkeypatch.setattr(jq, "RedisQueue", FakeRedisQueue)
+        monkeypatch.setattr(Settings, "is_feature_enabled", lambda _self, name: name == "redis_queue")
+
+        queue = jq.JobQueue(Settings())
+        assert queue.using_fallback is True
+        job = queue.create_job(name="while down", task="pipeline")
+
+        assert queue.ping() is False  # Redis still down: not healthy
+        assert queue.using_fallback is True
+
+        FakeRedisQueue.reachable = True
+        assert queue.ping() is True
+        assert queue.using_fallback is False
+        assert isinstance(queue._backend, FakeRedisQueue)
+        # The job created on the fallback moved to Redis and is still found
+        assert queue.get_job(job.id).name == "while down"
 
 
 class TestPackaging:

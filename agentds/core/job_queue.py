@@ -8,6 +8,7 @@ Author: Malav Patel
 
 from __future__ import annotations
 
+import threading
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -228,6 +229,12 @@ class RedisQueue:
         )
         return job.id
 
+    def store(self, job: Job) -> None:
+        """Write a job as it is, creating or replacing its record."""
+        import pickle
+
+        self._connection.hset(self._jobs_key, job.id, pickle.dumps(job))
+
     def submit(self, func: Callable[..., Any], *args: Any, job_timeout: int) -> str | None:
         """
         Hand a task to an RQ worker.
@@ -291,7 +298,11 @@ class JobQueue:
     """
     Job queue with automatic backend selection.
 
-    Tries Redis first, falls back to in-memory queue if unavailable.
+    Uses Redis when the ``redis_queue`` feature is enabled. If Redis can't be
+    reached, it falls back to an in-memory queue so the process still works,
+    reports itself unhealthy (``ping()`` is False) and reconnects on a later
+    ``ping()`` once Redis answers. With the feature disabled, the in-memory
+    queue is the intended backend.
     """
 
     def __init__(self, settings: Settings | None = None) -> None:
@@ -302,28 +313,67 @@ class JobQueue:
             settings: Application settings
         """
         self.settings = settings or get_settings()
+        self._redis_wanted = self.settings.is_feature_enabled("redis_queue")
+        self._backend_lock = threading.Lock()
         self._backend: InMemoryQueue | RedisQueue
         self._init_backend()
 
+    def _connect_redis(self) -> RedisQueue | None:
+        """Return a connected Redis backend, or None if Redis can't be reached."""
+        try:
+            redis_queue = RedisQueue(
+                self.settings.redis.url,
+                socket_timeout=self.settings.redis.socket_timeout,
+            )
+            if redis_queue.ping():
+                return redis_queue
+        except Exception as e:
+            logger.warning("Redis unavailable", error=str(e))
+        return None
+
     def _init_backend(self) -> None:
         """Initialize appropriate queue backend."""
-        if self.settings.is_feature_enabled("redis_queue"):
-            try:
-                redis_queue = RedisQueue(
-                    self.settings.redis.url,
-                    socket_timeout=self.settings.redis.socket_timeout,
-                )
-                if redis_queue.ping():
-                    self._backend = redis_queue
-                    logger.info("Using Redis job queue backend")
-                    return
-            except Exception as e:
-                logger.warning(
-                    "Redis unavailable, falling back to memory queue", error=str(e)
-                )
+        if self._redis_wanted:
+            redis_queue = self._connect_redis()
+            if redis_queue is not None:
+                self._backend = redis_queue
+                logger.info("Using Redis job queue backend")
+                return
+            logger.warning(
+                "Redis unavailable, falling back to memory queue until it can be reached"
+            )
 
         self._backend = InMemoryQueue()
         logger.info("Using in-memory job queue backend")
+
+    @property
+    def using_fallback(self) -> bool:
+        """True while the Redis queue is wanted but the in-memory queue is in use."""
+        return self._redis_wanted and isinstance(self._backend, InMemoryQueue)
+
+    def _reconnect_redis(self) -> bool:
+        """
+        Switch from the in-memory fallback to Redis if Redis now answers.
+
+        Jobs created while on the fallback are copied into Redis, so their ids
+        keep working.
+        """
+        with self._backend_lock:
+            fallback = self._backend
+            if not isinstance(fallback, InMemoryQueue):
+                return True  # another caller already switched
+            redis_queue = self._connect_redis()
+            if redis_queue is None:
+                return False
+            jobs = list(fallback._jobs.values())
+            for job in jobs:
+                redis_queue.store(job)
+            self._backend = redis_queue
+        logger.info(
+            "Reconnected to Redis; job queue switched from the in-memory fallback",
+            jobs_moved=len(jobs),
+        )
+        return True
 
     def create_job(
         self,
@@ -372,11 +422,15 @@ class JobQueue:
         """
         Check the backend can be reached.
 
-        Pings Redis for the Redis backend. The in-memory backend lives in this
-        process, so it is always reachable.
+        Pings Redis for the Redis backend. On the in-memory fallback (Redis
+        wanted but unreachable), tries to reconnect and is False until that
+        works. When the Redis queue is disabled, the in-memory backend is the
+        intended one and always reachable.
         """
         if isinstance(self._backend, RedisQueue):
             return self._backend.ping()
+        if self.using_fallback:
+            return self._reconnect_redis()
         return True
 
     def submit(self, func: Callable[..., Any], *args: Any, job_timeout: int) -> bool:

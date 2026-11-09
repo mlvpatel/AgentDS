@@ -117,7 +117,13 @@ When not ready, `status` is `not_ready`, `job_queue` is `false` and the
 response code is `503`.
 
 - `job_queue` is a Redis `PING`, refreshed every 10 seconds, when the Redis job
-  queue is in use. With the in-memory fallback it is always `true`.
+  queue is in use. If Redis can't be reached when the API starts, the API
+  keeps working on an in-memory fallback, but `job_queue` stays `false` (so
+  the instance is not ready) and each check tries to reconnect. Once Redis
+  answers, the API switches to it, moves over any jobs created in the
+  meantime, and becomes ready. With the Redis queue turned off
+  (`redis_queue` feature disabled), the in-memory queue is the intended
+  backend and `job_queue` is always `true`.
 - Before the first check has finished, the endpoint waits up to 0.5 seconds for
   it, so a healthy instance is ready on its first probe. If the check is still
   running after that, the instance reports `503` until the check passes.
