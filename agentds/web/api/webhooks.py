@@ -18,6 +18,7 @@ from typing import Any
 from anyio import to_thread
 from litestar import Litestar, Router, delete, get, post
 from litestar.config.cors import CORSConfig
+from litestar.middleware import DefineMiddleware
 from litestar.openapi import OpenAPIConfig
 from litestar.response import Response
 from pydantic import BaseModel, Field
@@ -727,8 +728,6 @@ def create_api(settings: Settings | None = None) -> Litestar:
     Returns:
         Configured Litestar application with auth and rate limiting
     """
-    from litestar.middleware import DefineMiddleware
-
     from agentds.web.api.middleware import (
         AuthenticationMiddleware,
         RateLimitMiddleware,

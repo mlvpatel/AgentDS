@@ -8,17 +8,17 @@ Author: Malav Patel
 
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from litestar import Request
+from litestar import MediaType, Request
 from litestar.connection import ASGIConnection
 from litestar.handlers import BaseRouteHandler
 from litestar.middleware import AbstractMiddleware
 from litestar.response.base import ASGIResponse
+from litestar.serialization import encode_json
 from litestar.types import ASGIApp, Receive, Scope, Send
 
 from agentds.core.config import Settings, get_settings
@@ -231,26 +231,26 @@ class APIKeyAuthenticator:
 # =============================================================================
 
 
-
-async def send_json_error(
+async def _send_json_error(
     scope: Scope,
     receive: Receive,
     send: Send,
-    content: dict[str, Any],
+    *,
     status_code: int,
+    content: dict[str, Any],
     headers: dict[str, str],
 ) -> None:
     """
-    Send a JSON error response straight from a middleware.
+    Send a JSON error response straight from middleware.
 
-    A litestar ``Response`` is not an ASGI app; calling one with
-    ``(scope, receive, send)`` raises, which turned every rejection into a 500.
+    A ``litestar.Response`` is not an ASGI callable, so middleware that
+    short-circuits a request must send an ``ASGIResponse`` instead.
     """
     response = ASGIResponse(
-        body=json.dumps(content).encode(),
+        body=encode_json(content),
         status_code=status_code,
         headers=headers,
-        media_type="application/json",
+        media_type=MediaType.JSON,
     )
     await response(scope, receive, send)
 
@@ -315,16 +315,16 @@ class AuthenticationMiddleware(AbstractMiddleware):
                 client_ip=request.client.host if request.client else "unknown",
             )
 
-            await send_json_error(
+            await _send_json_error(
                 scope,
                 receive,
                 send,
+                status_code=401,
                 content={
                     "error": "INVALID_API_KEY",
                     "message": "Invalid or missing API key",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 },
-                status_code=401,
                 headers={"WWW-Authenticate": "ApiKey"},
             )
             return
@@ -401,17 +401,17 @@ class RateLimitMiddleware(AbstractMiddleware):
                 retry_after=retry_after,
             )
 
-            await send_json_error(
+            await _send_json_error(
                 scope,
                 receive,
                 send,
+                status_code=429,
                 content={
                     "error": "RATE_LIMIT_EXCEEDED",
                     "message": f"Rate limit exceeded. Retry after {int(retry_after)} seconds.",
                     "retry_after_seconds": int(retry_after),
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 },
-                status_code=429,
                 headers={
                     "Retry-After": str(int(retry_after)),
                     "X-RateLimit-Limit": str(self.settings.rate_limit_per_minute),
