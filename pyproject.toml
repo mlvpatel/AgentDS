@@ -63,7 +63,7 @@ dependencies = [
     "httpx>=0.28.0",
     # Infrastructure
     "redis>=5.2.0",
-    "rq>=2.0.0",
+    "rq>=3.0.0",
     # Utilities
     "click>=8.1.0",
     "pydantic>=2.10.0",
