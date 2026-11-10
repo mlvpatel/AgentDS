@@ -8,13 +8,13 @@ Author: Malav Patel
 
 from __future__ import annotations
 
-import time
 import uuid
 from collections.abc import Generator
 from typing import Any
 
 import gradio as gr
 
+from agentds.agents.base import AgentAction
 from agentds.core.config import Settings, get_settings
 from agentds.core.job_queue import JobQueue
 from agentds.core.logger import get_logger, setup_logging
@@ -22,8 +22,9 @@ from agentds.workflows.pipeline import AgentDSPipeline, PipelineConfig, Pipeline
 
 logger = get_logger(__name__)
 
-# Global state for active pipelines
-_active_pipelines: dict[str, dict[str, Any]] = {}
+# Pipelines paused for human review, keyed by job id. Entries are removed when
+# the pipeline completes, fails or is stopped.
+_active_pipelines: dict[str, AgentDSPipeline] = {}
 
 
 def create_app(settings: Settings | None = None) -> gr.Blocks:
@@ -147,23 +148,19 @@ def create_app(settings: Settings | None = None) -> gr.Blocks:
                         value="No agent running",
                     )
 
-                    # Human-in-the-loop controls
-                    with gr.Row(visible=False):
-                        approve_btn = gr.Button("Approve & Continue", variant="primary")
-                        rerun_btn = gr.Button("Re-run")
-                        skip_btn = gr.Button("Skip")
-                        stop_btn = gr.Button("Stop Pipeline", variant="stop")
+                    # Human-in-the-loop controls, shown while a run waits for review
+                    with gr.Column(visible=False) as review_panel:
+                        with gr.Row():
+                            approve_btn = gr.Button("Approve & Continue", variant="primary")
+                            rerun_btn = gr.Button("Re-run")
+                            skip_btn = gr.Button("Skip")
+                            stop_btn = gr.Button("Stop Pipeline", variant="stop")
 
-                    # Feedback input
-                    feedback_input = gr.Textbox(
-                        label="Feedback (optional)",
-                        placeholder="Enter feedback for re-run...",
-                        visible=False,
-                    )
-                    gr.Button(
-                        "Re-run with Feedback",
-                        visible=False,
-                    )
+                        feedback_input = gr.Textbox(
+                            label="Feedback (optional)",
+                            placeholder="Enter feedback for re-run...",
+                        )
+                        rerun_feedback_btn = gr.Button("Re-run with Feedback")
 
                     # Output artifacts
                     with gr.Accordion("Output Artifacts", open=False):
@@ -261,15 +258,15 @@ def create_app(settings: Settings | None = None) -> gr.Blocks:
             phases: list[str],
             human_loop: bool,
             llm_preset: str,
-        ) -> Generator[tuple[str, float, str, dict], None, None]:
-            """Start the pipeline and stream progress."""
+        ) -> Generator[tuple[Any, ...], None, None]:
+            """Start the pipeline and report its real outcome."""
             # Validate inputs
             if not data_file and not data_url:
-                yield "Error: Please provide data file or URL", 0, "No data source", {}
+                yield _message("Error: Please provide data file or URL", "No data source")
                 return
 
             if not task_desc:
-                yield "Error: Please describe your task", 0, "No task description", {}
+                yield _message("Error: Please describe your task", "No task description")
                 return
 
             # Determine data source
@@ -282,75 +279,106 @@ def create_app(settings: Settings | None = None) -> gr.Blocks:
                 human_in_loop=human_loop,
             )
 
-            # Create pipeline
-            pipeline = AgentDSPipeline(config=config, settings=settings)
-
-            # Generate job ID
+            # Share the app's job queue so runs appear in the Jobs tab
+            pipeline = AgentDSPipeline(config=config, settings=settings, job_queue=job_queue)
             job_id = str(uuid.uuid4())
-            _active_pipelines[job_id] = {
-                "pipeline": pipeline,
-                "status": "running",
-                "current_agent": None,
-            }
 
-            # Run pipeline
+            first_agent = next(iter(pipeline.agent_sequence()), "pipeline")
+            yield _message("Running...", f"### {first_agent}\n\nRunning...")
+
             try:
                 result = pipeline.run(
                     data_source=data_source,
                     task_description=task_desc,
                     job_id=job_id,
                 )
-
-                # Stream progress updates
-                total_agents = sum(len(pipeline.PHASE_AGENTS.get(p, [])) for p in phase_enums)
-                completed = 0
-
-                for agent_name in pipeline._agents:
-                    _active_pipelines[job_id]["current_agent"] = agent_name
-
-                    status = f"Running: {agent_name}"
-                    progress = (completed / total_agents) * 100
-                    agent_info = f"### {agent_name}\n\nProcessing..."
-
-                    yield status, progress, agent_info, {}
-
-                    # Simulate agent execution (in real implementation, this would be event-driven)
-                    time.sleep(0.5)
-                    completed += 1
-
-                # Final result
-                final_status = "Pipeline completed successfully!"
-                yield final_status, 100, "All agents completed", result
-
             except Exception as e:
-                yield f"Error: {str(e)}", 0, f"Pipeline failed: {e}", {}
+                yield _message(f"Error: {e}", f"Pipeline failed: {e}")
+                return
 
-        def handle_approve(job_id: str) -> tuple[str, str]:
-            """Handle approve action."""
-            if job_id and job_id in _active_pipelines:
-                pipeline_data = _active_pipelines[job_id]
-                pipeline_data["status"] = "approved"
-                return "Approved! Continuing...", ""
-            return "No active pipeline", ""
+            if result["status"] == "awaiting_approval":
+                _active_pipelines[job_id] = pipeline
+            yield _render(result)
 
-        def handle_rerun(job_id: str) -> tuple[str, str]:
-            """Handle rerun action."""
-            if job_id and job_id in _active_pipelines:
-                return "Re-running current agent...", ""
-            return "No active pipeline", ""
+        def _message(status: str, agent_info: str) -> tuple[Any, ...]:
+            """Outputs for a message when no pipeline is awaiting review."""
+            return status, 0, agent_info, {}, None, gr.update(visible=False), ""
 
-        def handle_skip(job_id: str) -> tuple[str, str]:
-            """Handle skip action."""
-            if job_id and job_id in _active_pipelines:
-                return "Skipping current agent...", ""
-            return "No active pipeline", ""
+        def _render(result: dict[str, Any]) -> tuple[Any, ...]:
+            """Outputs for a pipeline result from run() or resume()."""
+            status = result["status"]
+            agent_name = result["current_agent"]
+            awaiting = status == "awaiting_approval"
 
-        def handle_stop(job_id: str) -> tuple[str, str]:
-            """Handle stop action."""
-            if job_id and job_id in _active_pipelines:
-                _active_pipelines[job_id]["status"] = "stopped"
-                return "Pipeline stopped by user", ""
-            return "No active pipeline", ""
+            if awaiting:
+                agent_result = result["state"].get("agent_results", {}).get(agent_name, {})
+                status_text = f"Waiting for your review of **{agent_name}**"
+                agent_info = f"### {agent_name}\n\nStatus: {agent_result.get('status', 'unknown')}"
+                if agent_result.get("error"):
+                    agent_info += f"\n\nError: {agent_result['error']}"
+                if agent_result.get("approval_message"):
+                    agent_info += f"\n\n{agent_result['approval_message']}"
+            elif status == "completed":
+                status_text = "Pipeline completed successfully!"
+                agent_info = "All agents completed"
+            elif status == "cancelled":
+                status_text = "Pipeline stopped by user"
+                agent_info = "Stopped"
+            else:
+                status_text = f"Error: {result['error'] or 'Pipeline failed'}"
+                agent_info = f"Pipeline failed: {result['error'] or 'unknown error'}"
+
+            summary = {
+                "job_id": result["job_id"],
+                "status": status,
+                "current_agent": agent_name,
+                "outputs": result["state"].get("final_outputs", {}),
+            }
+            return (
+                status_text,
+                result["progress_percent"],
+                agent_info,
+                summary,
+                result["job_id"] if awaiting else None,
+                gr.update(visible=awaiting),
+                "",
+            )
+
+        def _review(job_id: str | None, action: str, feedback: str | None = None) -> tuple[Any, ...]:
+            """Apply a review action to this session's paused pipeline."""
+            pipeline = _active_pipelines.get(job_id) if job_id else None
+            if pipeline is None:
+                return _message("No pipeline is waiting for review", "No agent running")
+            try:
+                result = pipeline.resume(job_id, action, feedback or None)
+            except Exception as e:
+                _active_pipelines.pop(job_id, None)
+                return _message(f"Error: {e}", f"Pipeline failed: {e}")
+            if result["status"] != "awaiting_approval":
+                _active_pipelines.pop(job_id, None)
+            return _render(result)
+
+        def handle_approve(job_id: str | None) -> tuple[Any, ...]:
+            """Approve the current agent and continue."""
+            return _review(job_id, AgentAction.APPROVE_AND_CONTINUE.value)
+
+        def handle_rerun(job_id: str | None) -> tuple[Any, ...]:
+            """Re-run the current agent."""
+            return _review(job_id, AgentAction.RERUN.value)
+
+        def handle_rerun_with_feedback(job_id: str | None, feedback: str) -> tuple[Any, ...]:
+            """Re-run the current agent with the reviewer's feedback."""
+            if not feedback or not feedback.strip():
+                return _review(job_id, AgentAction.RERUN.value)
+            return _review(job_id, AgentAction.RERUN_WITH_FEEDBACK.value, feedback)
+
+        def handle_skip(job_id: str | None) -> tuple[Any, ...]:
+            """Skip ahead to the next agent."""
+            return _review(job_id, AgentAction.SKIP.value)
+
+        def handle_stop(job_id: str | None) -> tuple[Any, ...]:
+            """Stop the pipeline."""
+            return _review(job_id, AgentAction.STOP_PIPELINE.value)
 
         def refresh_jobs() -> list[list[str]]:
             """Refresh job list."""
@@ -375,35 +403,36 @@ def create_app(settings: Settings | None = None) -> gr.Blocks:
                     return "".join(lines)
             return "No logs available"
 
-        # Connect events
+        # Connect events. Every pipeline handler updates the same outputs so the
+        # review panel and job id stay in sync with the pipeline's state.
+        pipeline_outputs = [
+            status_md,
+            progress_bar,
+            agent_output,
+            artifacts_list,
+            job_id_state,
+            review_panel,
+            feedback_input,
+        ]
+
         start_btn.click(
             fn=start_pipeline,
             inputs=[data_file, data_url, task_desc, phases, human_loop, llm_preset],
-            outputs=[status_md, progress_bar, agent_output, artifacts_list],
+            outputs=pipeline_outputs,
         )
 
-        approve_btn.click(
-            fn=handle_approve,
-            inputs=[job_id_state],
-            outputs=[status_md, feedback_input],
-        )
+        for button, handler in (
+            (approve_btn, handle_approve),
+            (rerun_btn, handle_rerun),
+            (skip_btn, handle_skip),
+            (stop_btn, handle_stop),
+        ):
+            button.click(fn=handler, inputs=[job_id_state], outputs=pipeline_outputs)
 
-        rerun_btn.click(
-            fn=handle_rerun,
-            inputs=[job_id_state],
-            outputs=[status_md, feedback_input],
-        )
-
-        skip_btn.click(
-            fn=handle_skip,
-            inputs=[job_id_state],
-            outputs=[status_md, feedback_input],
-        )
-
-        stop_btn.click(
-            fn=handle_stop,
-            inputs=[job_id_state],
-            outputs=[status_md, feedback_input],
+        rerun_feedback_btn.click(
+            fn=handle_rerun_with_feedback,
+            inputs=[job_id_state, feedback_input],
+            outputs=pipeline_outputs,
         )
 
         refresh_jobs_btn.click(

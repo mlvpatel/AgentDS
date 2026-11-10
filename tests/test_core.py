@@ -44,6 +44,40 @@ class TestSettings:
         settings = Settings(api_keys="key1,key2,key3")
         assert settings.api_keys == ["key1", "key2", "key3"]
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("key1,key2,key3", ["key1", "key2", "key3"]),  # documented form
+            (" key1 , key2 ,", ["key1", "key2"]),
+            ("single-key", ["single-key"]),
+            ('["key1", "key2"]', ["key1", "key2"]),  # JSON list still works
+            ("", []),
+        ],
+    )
+    def test_api_keys_from_environment(self, monkeypatch, value, expected):
+        """API_KEYS set in the environment, as .env.example documents, loads."""
+        from agentds.core.config import Settings
+
+        monkeypatch.setenv("API_KEYS", value)
+        assert Settings().api_keys == expected
+
+    def test_api_keys_from_env_file(self, tmp_path, monkeypatch):
+        from agentds.core.config import Settings
+
+        monkeypatch.delenv("API_KEYS", raising=False)
+        env_file = tmp_path / ".env"
+        env_file.write_text("API_KEYS=key1,key2\n")
+        assert Settings(_env_file=env_file).api_keys == ["key1", "key2"]
+
+    def test_api_keys_rejects_malformed_json(self, monkeypatch):
+        from pydantic import ValidationError
+
+        from agentds.core.config import Settings
+
+        monkeypatch.setenv("API_KEYS", '["key1", ')
+        with pytest.raises(ValidationError, match="API_KEYS"):
+            Settings()
+
     def test_llm_settings(self):
         """Test LLM settings."""
         from agentds.core.config import LLMSettings
@@ -167,6 +201,94 @@ class TestJobQueue:
         assert job.total_steps == 10
         assert job.progress_percent == 20.0
         assert job.current_agent == "TestAgent"
+
+    def test_redis_backend_dependencies_are_installed(self):
+        """A normal install provides everything RedisQueue imports.
+
+        Without rq, RedisQueue fails to import and JobQueue silently falls
+        back to the in-memory queue even when Redis is reachable.
+        """
+        import importlib.util
+
+        for module in ("redis", "rq"):
+            assert importlib.util.find_spec(module) is not None, f"{module} is not installed"
+
+    def test_redis_connection_uses_configured_socket_timeout(self):
+        """A hung Redis can't stall a ping or job operation forever."""
+        from agentds.core.job_queue import RedisQueue
+
+        redis_queue = RedisQueue("redis://localhost:6399/0", socket_timeout=2)  # no I/O here
+        kwargs = redis_queue._connection.connection_pool.connection_kwargs
+
+        assert kwargs["socket_timeout"] == 2
+        assert kwargs["socket_connect_timeout"] == 2
+
+    def test_in_memory_queue_ping_is_true_when_redis_queue_is_disabled(self, monkeypatch):
+        """With the Redis queue turned off, the in-memory queue is the intended backend."""
+        from agentds.core.config import Settings
+        from agentds.core.job_queue import InMemoryQueue, JobQueue
+
+        monkeypatch.setattr(Settings, "is_feature_enabled", lambda _self, _name: False)
+        queue = JobQueue(Settings())
+        assert isinstance(queue._backend, InMemoryQueue)
+        assert queue.using_fallback is False
+        assert queue.ping() is True
+
+    def test_redis_fallback_is_unhealthy_until_redis_returns(self, monkeypatch):
+        """Redis unreachable at startup: ping is False, then the queue moves to Redis."""
+        from agentds.core import job_queue as jq
+        from agentds.core.config import Settings
+
+        class FakeRedisQueue:
+            reachable = False
+            stored: dict = {}
+
+            def __init__(self, url, socket_timeout=None):
+                pass
+
+            def ping(self):
+                return FakeRedisQueue.reachable
+
+            def store(self, job):
+                FakeRedisQueue.stored[job.id] = job
+
+            def get_job(self, job_id):
+                return FakeRedisQueue.stored.get(job_id)
+
+        monkeypatch.setattr(jq, "RedisQueue", FakeRedisQueue)
+        monkeypatch.setattr(Settings, "is_feature_enabled", lambda _self, name: name == "redis_queue")
+
+        queue = jq.JobQueue(Settings())
+        assert queue.using_fallback is True
+        job = queue.create_job(name="while down", task="pipeline")
+
+        assert queue.ping() is False  # Redis still down: not healthy
+        assert queue.using_fallback is True
+
+        FakeRedisQueue.reachable = True
+        assert queue.ping() is True
+        assert queue.using_fallback is False
+        assert isinstance(queue._backend, FakeRedisQueue)
+        # The job created on the fallback moved to Redis and is still found
+        assert queue.get_job(job.id).name == "while down"
+
+
+class TestPackaging:
+    """Packages the code imports directly must be declared, not arrive transitively."""
+
+    def test_direct_runtime_imports_are_declared(self):
+        import re
+        from importlib.metadata import requires
+
+        declared = {
+            re.split(r"[\s<>=!~\[;]", requirement, maxsplit=1)[0].lower()
+            for requirement in requires("agentds") or []
+            if "extra ==" not in requirement  # optional extras don't count
+        }
+
+        # click: the `agentds` CLI; redis and rq: the Redis job queue
+        for package in ("click", "redis", "rq"):
+            assert package in declared, f"{package} is imported but not declared in pyproject.toml"
 
 
 # =============================================================================

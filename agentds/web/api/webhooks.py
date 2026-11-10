@@ -8,10 +8,14 @@ Author: Malav Patel
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
+from anyio import to_thread
 from litestar import Litestar, Router, delete, get, post
 from litestar.config.cors import CORSConfig
 from litestar.middleware import DefineMiddleware
@@ -19,11 +23,17 @@ from litestar.openapi import OpenAPIConfig
 from litestar.response import Response
 from pydantic import BaseModel, Field
 
-from agentds.agents import AgentAction
+from agentds.agents import AGENT_REGISTRY, AgentAction
 from agentds.core.config import Settings, get_settings
 from agentds.core.job_queue import JobQueue, JobStatus
 from agentds.core.logger import get_logger
-from agentds.workflows.pipeline import AgentDSPipeline, PipelineConfig, PipelinePhase
+from agentds.workflows.pipeline import (
+    REVIEW_ACTIONS,
+    PipelineConfig,
+    PipelinePhase,
+    create_pipeline_job,
+)
+from agentds.workflows.tasks import resume_pipeline_job, run_pipeline_job
 
 logger = get_logger(__name__)
 
@@ -47,9 +57,11 @@ class PipelineStartResponse(BaseModel):
     """Response from pipeline start."""
 
     job_id: str
-    status: str
+    status: str  # completed, failed, cancelled or awaiting_approval
     message: str
     created_at: str
+    current_agent: str | None = None
+    error: str | None = None
 
 
 class PipelineStatusResponse(BaseModel):
@@ -98,6 +110,21 @@ class HealthResponse(BaseModel):
     components: dict[str, bool]
 
 
+class LivenessResponse(BaseModel):
+    """Liveness probe response."""
+
+    status: str
+    timestamp: str
+
+
+class ReadinessResponse(BaseModel):
+    """Readiness probe response."""
+
+    status: str
+    timestamp: str
+    components: dict[str, bool]
+
+
 class ErrorResponse(BaseModel):
     """Error response."""
 
@@ -110,7 +137,6 @@ class ErrorResponse(BaseModel):
 
 _settings: Settings | None = None
 _job_queue: JobQueue | None = None
-_active_pipelines: dict[str, Any] = {}
 
 
 def get_dependencies() -> tuple[Settings, JobQueue]:
@@ -123,29 +149,162 @@ def get_dependencies() -> tuple[Settings, JobQueue]:
     return _settings, _job_queue
 
 
+async def get_dependencies_async() -> tuple[Settings, JobQueue]:
+    """
+    Get global dependencies without blocking the event loop.
+
+    The first call builds the JobQueue, which connects to Redis and can wait
+    for the full socket timeout when Redis is unreachable; that happens in a
+    worker thread so other requests (liveness probes included) keep flowing.
+    """
+    if _settings is None or _job_queue is None:
+        return await to_thread.run_sync(get_dependencies)
+    return _settings, _job_queue
+
+
 # ==================== API Endpoints ====================
 
-@get("/health")
-async def health_check() -> HealthResponse:
-    """Health check endpoint."""
-    settings, job_queue = get_dependencies()
+# Health checks of dependencies run in the background and are cached, so a
+# slow or hanging dependency never delays a probe. The LLM check is a real
+# (billed) completion that can take minutes while a provider is slow; the
+# job queue check is a Redis PING.
+LLM_HEALTH_TTL_SECONDS = 300.0
+JOB_QUEUE_HEALTH_TTL_SECONDS = 10.0
+# How long the readiness probe waits for the very first job queue check;
+# below the 1 s default probe timeout of Kubernetes
+READINESS_FIRST_CHECK_WAIT_SECONDS = 0.5
 
-    components = {
-        "api": True,
-        "job_queue": True,
-    }
 
-    # Check LLM connection (simplified)
+class BackgroundCheck:
+    """
+    A dependency check run in a worker thread, at most one at a time.
+
+    ``status()`` returns the last result immediately (None before the first
+    check finishes) and starts a new check when the result is older than
+    ``ttl_seconds``.
+    """
+
+    def __init__(self, name: str, check: Callable[[], bool], ttl_seconds: float) -> None:
+        self.name = name
+        self.check = check
+        self.ttl_seconds = ttl_seconds
+        self.ok: bool | None = None
+        self.checked_at: float | None = None
+        self._task: asyncio.Task[None] | None = None
+
+    def status(self) -> bool | None:
+        stale = self.checked_at is None or time.monotonic() - self.checked_at > self.ttl_seconds
+        if stale and (self._task is None or self._task.done()):
+            # Keep a reference so the task isn't garbage-collected mid-check
+            self._task = asyncio.create_task(self._refresh())
+        return self.ok
+
+    async def first_status(self, wait_seconds: float) -> bool | None:
+        """
+        Like ``status()``, but before the first check has finished, wait up to
+        ``wait_seconds`` for it, so a fast dependency is reported on the first
+        call instead of None.
+        """
+        ok = self.status()
+        if self.checked_at is None and self._task is not None:
+            await asyncio.wait({self._task}, timeout=wait_seconds)  # doesn't cancel the check
+            ok = self.ok
+        return ok
+
+    async def _refresh(self) -> None:
+        try:
+            ok = await to_thread.run_sync(self.check)
+        except Exception as e:
+            logger.warning("Health check failed", check=self.name, error=str(e))
+            ok = False
+        self.ok = bool(ok)
+        self.checked_at = time.monotonic()
+
+
+_health_checks: dict[str, BackgroundCheck] = {}
+
+
+def _check_llm(settings: Settings) -> bool:
+    """Blocking check that the default LLM answers."""
     try:
         from agentds.core.llm_gateway import LLMGateway
 
-        gateway = LLMGateway(settings)
-        if gateway.validate_connection():
-            components["llm"] = True
-        else:
-            components["llm"] = False
-    except Exception:
-        components["llm"] = False
+        return bool(LLMGateway(settings).validate_connection())
+    except Exception as e:
+        logger.warning("LLM health check failed", error=str(e))
+        return False
+
+
+def _check_job_queue(job_queue: JobQueue) -> bool:
+    """Blocking check that the job queue backend answers (a Redis PING)."""
+    return job_queue.ping()
+
+
+def _get_health_checks(settings: Settings, job_queue: JobQueue) -> dict[str, BackgroundCheck]:
+    if not _health_checks:
+        _health_checks["llm"] = BackgroundCheck(
+            "llm", lambda: _check_llm(settings), LLM_HEALTH_TTL_SECONDS
+        )
+        _health_checks["job_queue"] = BackgroundCheck(
+            "job_queue", lambda: _check_job_queue(job_queue), JOB_QUEUE_HEALTH_TTL_SECONDS
+        )
+    return _health_checks
+
+
+@get("/health/live")
+async def liveness_check() -> LivenessResponse:
+    """Liveness probe: the process is up and its event loop is answering.
+
+    Checks no dependencies, so a Redis or LLM outage never gets a healthy
+    process restarted (restarting would not fix either).
+    """
+    return LivenessResponse(status="alive", timestamp=datetime.now(timezone.utc).isoformat())
+
+
+@get("/health/ready")
+async def readiness_check() -> Response[ReadinessResponse]:
+    """Readiness probe: this instance can accept work.
+
+    Returns 200 when the job queue backend answered its last background check
+    (a Redis PING, refreshed every JOB_QUEUE_HEALTH_TTL_SECONDS), and 503 while
+    it is failing or before its first check has passed. The LLM is left out on
+    purpose: a provider outage affects every instance alike, and taking them
+    all out of service would turn it into a full API outage.
+    """
+    settings, job_queue = await get_dependencies_async()
+    job_queue_check = _get_health_checks(settings, job_queue)["job_queue"]
+    components = {
+        "job_queue": bool(await job_queue_check.first_status(READINESS_FIRST_CHECK_WAIT_SECONDS)),
+    }
+    ready = all(components.values())
+
+    return Response(
+        content=ReadinessResponse(
+            status="ready" if ready else "not_ready",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            components=components,
+        ),
+        status_code=200 if ready else 503,
+    )
+
+
+@get("/health")
+async def health_check() -> HealthResponse:
+    """Health report of every component, for dashboards and people.
+
+    Always returns 200; use /health/live and /health/ready for probes.
+    ``job_queue`` and ``llm`` report the last background check of each
+    dependency (refreshed every JOB_QUEUE_HEALTH_TTL_SECONDS and
+    LLM_HEALTH_TTL_SECONDS) and are false until a first check has passed.
+    """
+    settings, job_queue = await get_dependencies_async()
+    checks = _get_health_checks(settings, job_queue)
+
+    components = {
+        "api": True,
+        "job_queue": bool(checks["job_queue"].status()),
+        "llm": bool(checks["llm"].status()),
+    }
 
     return HealthResponse(
         status="healthy" if all(components.values()) else "degraded",
@@ -157,7 +316,14 @@ async def health_check() -> HealthResponse:
 
 @post("/pipeline/start")
 async def start_pipeline(data: PipelineStartRequest) -> PipelineStartResponse:
-    """Start a new pipeline execution."""
+    """Start a new pipeline execution.
+
+    With the Redis queue and an RQ worker running, the run is handed to the
+    worker and this returns 202 with status "queued"; poll
+    /api/pipeline/status/{job_id}. Otherwise the pipeline runs in a thread of
+    this process, so the event loop stays free, and the response reports the
+    outcome.
+    """
     settings, job_queue = get_dependencies()
 
     try:
@@ -168,28 +334,38 @@ async def start_pipeline(data: PipelineStartRequest) -> PipelineStartResponse:
             human_in_loop=data.human_in_loop,
         )
 
-        # Create and run pipeline
-        pipeline = AgentDSPipeline(config=config, settings=settings)
-        job_id = str(uuid.uuid4())
-
-        result = pipeline.run(
+        # Record the job first: the worker (or thread) loads it by id, and
+        # /pipeline/status can report on it straight away.
+        job = create_pipeline_job(
+            job_queue,
+            config,
             data_source=data.data_source,
             task_description=data.task_description,
             output_destination=data.output_destination,
-            job_id=job_id,
         )
+        created_at = datetime.now(timezone.utc).isoformat()
 
-        # Store pipeline reference
-        _active_pipelines[job_id] = {
-            "pipeline": pipeline,
-            "result": result,
-        }
+        if job_queue.submit(run_pipeline_job, job.id, job_timeout=settings.pipeline_job_timeout):
+            return Response(
+                content=PipelineStartResponse(
+                    job_id=job.id,
+                    status="queued",
+                    message=f"Pipeline queued for a worker; poll /api/pipeline/status/{job.id}",
+                    created_at=created_at,
+                ).model_dump(),
+                status_code=202,
+            )
+
+        # No worker available: run here, off the event loop
+        result = await to_thread.run_sync(run_pipeline_job, job.id, job_queue)
 
         return PipelineStartResponse(
-            job_id=job_id,
-            status="started",
-            message="Pipeline started successfully",
-            created_at=datetime.now(timezone.utc).isoformat(),
+            job_id=job.id,
+            status=result["status"],
+            message=_status_message(result),
+            created_at=created_at,
+            current_agent=result["current_agent"],
+            error=result["error"],
         )
 
     except Exception as e:
@@ -250,8 +426,20 @@ async def cancel_pipeline(job_id: str) -> dict[str, str]:
     )
 
 
+def _status_message(result: dict[str, Any]) -> str:
+    """Human-readable summary of a pipeline run or resume result."""
+    status = result["status"]
+    if status == "awaiting_approval":
+        return f"Waiting for review of {result['current_agent']}"
+    if status == "completed":
+        return "Pipeline completed"
+    if status == "cancelled":
+        return "Pipeline stopped by user"
+    return f"Pipeline failed: {result.get('error') or 'unknown error'}"
+
+
 @post("/pipeline/action/{job_id:str}")
-async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, str]:
+async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, Any]:
     """Handle human-in-the-loop action."""
     settings, job_queue = get_dependencies()
 
@@ -268,33 +456,64 @@ async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, str]:
             status_code=400,
         )
 
-    # Get pipeline
-    if job_id not in _active_pipelines:
+    if action not in REVIEW_ACTIONS:
         return Response(
             content=ErrorResponse(
-                error="Pipeline not found",
-                detail=f"No active pipeline with ID: {job_id}",
+                error="Invalid action",
+                detail=f"Action must be one of: {sorted(a.value for a in REVIEW_ACTIONS)}",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            ).model_dump(),
+            status_code=400,
+        )
+
+    job = job_queue.get_job(job_id)
+    if not job:
+        return Response(
+            content=ErrorResponse(
+                error="Job not found",
+                detail=f"No job with ID: {job_id}",
                 timestamp=datetime.now(timezone.utc).isoformat(),
             ).model_dump(),
             status_code=404,
         )
 
-    pipeline_data = _active_pipelines[job_id]
-    pipeline = pipeline_data["pipeline"]
-
-    try:
-        pipeline.resume(
-            job_id=job_id,
-            user_action=action.value,
-            user_feedback=data.feedback,
+    if job.status != JobStatus.PAUSED or not job.pipeline_state:
+        return Response(
+            content=ErrorResponse(
+                error="Action not allowed",
+                detail=f"Job {job_id} is not awaiting review (status: {job.status.value})",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            ).model_dump(),
+            status_code=409,
         )
 
-        return {
-            "status": "success",
-            "action": action.value,
-            "job_id": job_id,
-        }
+    # Claim the review before handing it off, so a second action gets 409 and
+    # this request's copy of the job can't overwrite a worker's later updates.
+    job.resume(data.feedback)
+    job_queue.update_job(job)
 
+    if job_queue.submit(
+        resume_pipeline_job,
+        job_id,
+        action.value,
+        data.feedback,
+        job_timeout=settings.pipeline_job_timeout,
+    ):
+        return Response(
+            content={
+                "status": "queued",
+                "action": action.value,
+                "job_id": job_id,
+                "message": f"Review action queued for a worker; poll /api/pipeline/status/{job_id}",
+            },
+            status_code=202,
+        )
+
+    # No worker available: resume here, off the event loop
+    try:
+        result = await to_thread.run_sync(
+            resume_pipeline_job, job_id, action.value, data.feedback, job_queue
+        )
     except Exception as e:
         return Response(
             content=ErrorResponse(
@@ -305,16 +524,64 @@ async def pipeline_action(job_id: str, data: ActionRequest) -> dict[str, str]:
             status_code=500,
         )
 
+    return {
+        "status": "success",
+        "action": action.value,
+        "job_id": job_id,
+        "pipeline_status": result["status"],
+        "current_agent": result["current_agent"],
+        "message": _status_message(result),
+        "error": result["error"],
+    }
 
-@post("/agent/run")
-async def run_agent(data: AgentRunRequest) -> dict[str, Any]:
-    """Run a single agent independently."""
-    settings, job_queue = get_dependencies()
 
-    from agentds.agents import AGENT_REGISTRY
+def _run_single_agent(settings: Settings, data: AgentRunRequest, job_id: str) -> dict[str, Any]:
+    """Build and run one agent to completion. Blocking: call it from a worker thread."""
     from agentds.agents.base import AgentContext
     from agentds.core.artifact_store import ArtifactStore
     from agentds.core.llm_gateway import LLMGateway
+
+    # One gateway and store, shared by the agent and its context
+    llm_gateway = LLMGateway(settings)
+    artifact_store = ArtifactStore(settings)
+    agent = AGENT_REGISTRY[data.agent_name](  # type: ignore[abstract]
+        settings=settings,
+        llm_gateway=llm_gateway,
+        artifact_store=artifact_store,
+    )
+    context = AgentContext(
+        job_id=job_id,
+        settings=settings,
+        llm_gateway=llm_gateway,
+        artifact_store=artifact_store,
+        task_description=data.task_description,
+        extra={
+            "data_source": data.data_source,
+            **data.config,
+        },
+    )
+
+    result = agent.run(context)
+
+    return {
+        "job_id": job_id,
+        "agent": data.agent_name,
+        "status": result.status.value,
+        "outputs": result.outputs,
+        "artifacts": result.artifacts,
+        "duration_seconds": result.duration_seconds,
+        "error": result.error,
+    }
+
+
+@post("/agent/run")
+async def run_agent(data: AgentRunRequest) -> dict[str, Any]:
+    """Run a single agent independently.
+
+    The agent runs in a worker thread, so the API keeps serving other
+    requests (including health probes) while it works.
+    """
+    settings, job_queue = get_dependencies()
 
     if data.agent_name not in AGENT_REGISTRY:
         return Response(
@@ -327,36 +594,7 @@ async def run_agent(data: AgentRunRequest) -> dict[str, Any]:
         )
 
     try:
-        # Create agent
-        agent_class = AGENT_REGISTRY[data.agent_name]
-        agent = agent_class(settings=settings)  # type: ignore[abstract]
-
-        # Create context
-        job_id = str(uuid.uuid4())
-        context = AgentContext(
-            job_id=job_id,
-            settings=settings,
-            llm_gateway=LLMGateway(settings),
-            artifact_store=ArtifactStore(settings),
-            task_description=data.task_description,
-            extra={
-                "data_source": data.data_source,
-                **data.config,
-            },
-        )
-
-        # Run agent
-        result = agent.run(context)
-
-        return {
-            "job_id": job_id,
-            "agent": data.agent_name,
-            "status": result.status.value,
-            "outputs": result.outputs,
-            "artifacts": result.artifacts,
-            "duration_seconds": result.duration_seconds,
-            "error": result.error,
-        }
+        return await to_thread.run_sync(_run_single_agent, settings, data, str(uuid.uuid4()))
 
     except Exception as e:
         return Response(
@@ -464,6 +702,8 @@ api_router = Router(
     path="/api",
     route_handlers=[
         health_check,
+        liveness_check,
+        readiness_check,
         start_pipeline,
         get_pipeline_status,
         cancel_pipeline,
@@ -507,6 +747,7 @@ def create_api(settings: Settings | None = None) -> Litestar:
             version="1.0.0",
             description="REST API for AgentDS multi-agent data science pipeline",
         ),
+        # Pass the app's settings on, so API keys and rate limits come from them
         middleware=[
             DefineMiddleware(AuthenticationMiddleware, settings=settings),
             DefineMiddleware(RateLimitMiddleware, settings=settings),

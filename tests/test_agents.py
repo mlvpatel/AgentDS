@@ -171,6 +171,104 @@ class TestFeatureEngineerAgent:
 
 
 # =============================================================================
+# Data handoff between build agents
+# =============================================================================
+
+def _completed(name: str, **outputs: object) -> AgentResult:
+    return AgentResult(agent_name=name, status=AgentStatus.COMPLETED, outputs=dict(outputs))
+
+
+class TestDataHandoff:
+    """Agents read their input dataset from the nearest upstream agent that produced one."""
+
+    @pytest.fixture
+    def build_context(
+        self, agent_context: AgentContext, mock_settings: Settings, tmp_path: Path
+    ) -> AgentContext:
+        mock_settings.temp_dir = tmp_path / "temp"
+        mock_settings.temp_dir.mkdir()
+        return agent_context
+
+    def test_eda_passes_through_its_input_data_path(
+        self,
+        build_context: AgentContext,
+        mock_settings: Settings,
+        mock_llm_gateway: MagicMock,
+        mock_artifact_store: ArtifactStore,
+        sample_parquet_path: Path,
+    ):
+        build_context.previous_results = {
+            "DataCleaningAgent": _completed("DataCleaningAgent", data_path=str(sample_parquet_path)),
+        }
+        agent = EDACopilotAgent(
+            settings=mock_settings, llm_gateway=mock_llm_gateway, artifact_store=mock_artifact_store
+        )
+
+        result = agent.execute(build_context)
+
+        assert result.status == AgentStatus.COMPLETED, result.error
+        assert result.outputs["data_path"] == str(sample_parquet_path)
+
+    def test_feature_engineer_runs_after_eda_without_data_path(
+        self,
+        build_context: AgentContext,
+        mock_settings: Settings,
+        mock_llm_gateway: MagicMock,
+        mock_artifact_store: ArtifactStore,
+        sample_parquet_path: Path,
+    ):
+        # Results as an EDA agent from before the fix would leave them: no data_path.
+        build_context.previous_results = {
+            "DataLoaderAgent": _completed("DataLoaderAgent", data_path="/missing/raw.parquet"),
+            "DataCleaningAgent": _completed("DataCleaningAgent", data_path=str(sample_parquet_path)),
+            "EDACopilotAgent": _completed("EDACopilotAgent", statistics={}),
+        }
+        agent = FeatureEngineerAgent(
+            settings=mock_settings, llm_gateway=mock_llm_gateway, artifact_store=mock_artifact_store
+        )
+
+        result = agent.execute(build_context)
+
+        assert result.status == AgentStatus.COMPLETED, result.error
+
+    def test_resolve_data_path_prefers_nearest_upstream(self, agent_context: AgentContext):
+        agent_context.previous_results = {
+            "DataCleaningAgent": _completed("DataCleaningAgent", data_path="clean.parquet"),
+            "EDACopilotAgent": _completed("EDACopilotAgent", data_path="eda.parquet"),
+        }
+
+        path = FeatureEngineerAgent.resolve_data_path(
+            agent_context, "EDACopilotAgent", "DataCleaningAgent"
+        )
+
+        assert path == "eda.parquet"
+
+    def test_resolve_data_path_skips_failed_results(self, agent_context: AgentContext):
+        failed = _completed("DataCleaningAgent", data_path="partial.parquet")
+        failed.status = AgentStatus.FAILED
+        agent_context.previous_results = {
+            "DataLoaderAgent": _completed("DataLoaderAgent", data_path="raw.parquet"),
+            "DataCleaningAgent": failed,
+        }
+
+        path = FeatureEngineerAgent.resolve_data_path(
+            agent_context, "DataCleaningAgent", "DataLoaderAgent"
+        )
+
+        assert path == "raw.parquet"
+
+    def test_resolve_data_path_names_agents_when_none_found(self, agent_context: AgentContext):
+        agent_context.previous_results = {
+            "EDACopilotAgent": _completed("EDACopilotAgent", statistics={}),
+        }
+
+        with pytest.raises(ValueError, match="EDACopilotAgent, DataLoaderAgent"):
+            FeatureEngineerAgent.resolve_data_path(
+                agent_context, "EDACopilotAgent", "DataLoaderAgent"
+            )
+
+
+# =============================================================================
 # AutoMLAgent Tests
 # =============================================================================
 
@@ -203,6 +301,306 @@ class TestAPIWrapperAgent:
         agent = APIWrapperAgent(settings=mock_settings)
         prompt = agent.get_system_prompt()
         assert "APIWrapperAgent" in prompt
+
+    @staticmethod
+    def _serve_generated_api(
+        mock_settings: Settings,
+        tmp_path: Path,
+        features: list[str],
+        task_type: str,
+        prediction: float,
+        requests: list[tuple[str, dict]],
+        categorical: tuple[str, ...] = (),
+        pipeline: object | None = None,
+    ) -> tuple[list, list[list[str]], list[dict]]:
+        """Generate app.py, import it, and send requests to it with a stub model."""
+        import importlib.util
+        import sys
+
+        from litestar.testing import TestClient
+
+        agent = APIWrapperAgent(settings=mock_settings)
+        code = agent._generate_api_code({}, features, task_type, categorical_features=categorical)
+
+        app_file = tmp_path / "generated_app.py"
+        app_file.write_text(code)
+        spec = importlib.util.spec_from_file_location("generated_app", app_file)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["generated_app"] = module
+
+        class StubModel:
+            def __init__(self) -> None:
+                self.columns: list[list[str]] = []
+                self.rows: list[dict] = []
+
+            def predict(self, frame):
+                if hasattr(frame, "columns"):
+                    self.columns.append(list(frame.columns))
+                    self.rows.append(frame.iloc[0].to_dict())
+                else:  # a transformed array from a real pipeline
+                    self.rows.append({"values": [float(v) for v in frame[0]]})
+                return [prediction]
+
+        stub = StubModel()
+        try:
+            spec.loader.exec_module(module)
+            module._model = stub
+            module._pipeline = pipeline
+            with TestClient(app=module.app) as client:
+                responses = [client.post(path, json=body) for path, body in requests]
+        finally:
+            sys.modules.pop("generated_app", None)
+        return responses, stub.columns, stub.rows
+
+    @pytest.mark.parametrize(
+        ("task_type", "expected"),
+        [("classification", 1), ("regression", 1.5)],
+    )
+    def test_generated_api_serves_predictions(
+        self,
+        mock_settings: Settings,
+        tmp_path: Path,
+        task_type: str,
+        expected: float,
+    ):
+        """The generated app.py imports, and its endpoints build input from the request."""
+        (single, batch), columns, _rows = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            ["tenure", "monthly_charges"],
+            task_type,
+            expected,
+            [
+                ("/predict", {"tenure": 3, "monthly_charges": 20.5}),
+                ("/predict/batch", {"instances": [{"tenure": 1, "monthly_charges": 9.0}]}),
+            ],
+        )
+
+        assert single.status_code == 201, single.text
+        assert single.json()["prediction"] == expected
+        assert batch.status_code == 201, batch.text
+        assert batch.json()["predictions"][0]["prediction"] == expected
+        assert columns == [["tenure", "monthly_charges"]] * 2
+
+    def test_generated_api_handles_awkward_column_names(
+        self, mock_settings: Settings, tmp_path: Path
+    ):
+        """Any column name yields valid code, and the model sees the original names."""
+        features = [
+            "Annual Income (k$)",
+            "2019_sales",
+            "class",
+            'say "hi" \\ there',
+            "a b",
+            "a-b",
+            "_id",
+            "json",
+            "model_type",
+            "naïve score",
+        ]
+        body = {name: float(i) for i, name in enumerate(features)}
+
+        (single, batch), columns, _rows = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            features,
+            "regression",
+            2.0,
+            [("/predict", body), ("/predict/batch", {"instances": [body]})],
+        )
+
+        assert single.status_code == 201, single.text
+        assert batch.status_code == 201, batch.text
+        # Every feature reached the model under its original name, in order:
+        # nothing collided, was dropped, or was renamed.
+        assert columns == [features, features]
+
+    def test_generated_field_names_are_unique_identifiers(self, mock_settings: Settings):
+        """Generated field names are valid, distinct, and safe as Pydantic fields."""
+        import keyword
+
+        from pydantic import BaseModel
+
+        names = APIWrapperAgent._field_identifiers(
+            ["a b", "a-b", "a_b", "", "123", "for", "_x", "dict", "model_x", "x" * 3]
+        )
+
+        assert len(set(names)) == len(names)
+        for name in names:
+            assert name.isidentifier() and not keyword.iskeyword(name), name
+            assert not name.startswith("_"), name
+            assert not name.startswith("model_"), name
+            assert not hasattr(BaseModel, name), name
+
+    def test_generated_api_accepts_categorical_values(
+        self, mock_settings: Settings, tmp_path: Path
+    ):
+        """Categorical columns take string values; numeric columns stay floats."""
+        body = {"tenure": 3, "plan type": "gold"}
+
+        (single, batch), _columns, rows = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            ["tenure", "plan type"],
+            "classification",
+            1,
+            [("/predict", body), ("/predict/batch", {"instances": [body]})],
+            categorical=("plan type",),
+        )
+
+        assert single.status_code == 201, single.text
+        assert batch.status_code == 201, batch.text
+        assert rows == [{"tenure": 3.0, "plan type": "gold"}] * 2
+
+    def test_generated_api_accepts_missing_values(
+        self, mock_settings: Settings, tmp_path: Path
+    ):
+        """Omitted or null inputs reach the pipeline as NaN, which imputers fill."""
+        import math
+
+        (omitted, nulls, batch), _columns, rows = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            ["tenure", "plan"],
+            "classification",
+            1,
+            [
+                ("/predict", {"plan": "gold"}),
+                ("/predict", {"tenure": None, "plan": None}),
+                ("/predict/batch", {"instances": [{"tenure": 4}]}),
+            ],
+            categorical=("plan",),
+        )
+
+        assert omitted.status_code == 201, omitted.text
+        assert nulls.status_code == 201, nulls.text
+        assert batch.status_code == 201, batch.text
+
+        def is_nan(value: object) -> bool:
+            return isinstance(value, float) and math.isnan(value)
+
+        assert is_nan(rows[0]["tenure"]) and rows[0]["plan"] == "gold"
+        assert is_nan(rows[1]["tenure"]) and is_nan(rows[1]["plan"])
+        assert rows[2]["tenure"] == 4.0 and is_nan(rows[2]["plan"])
+
+    def test_generated_api_missing_values_are_imputed_by_real_pipeline(
+        self, mock_settings: Settings, tmp_path: Path
+    ):
+        """A fitted scikit-learn pipeline fills the gaps; the model gets no NaN."""
+        import math
+
+        import pandas as pd
+        from sklearn.compose import ColumnTransformer
+        from sklearn.impute import SimpleImputer
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import OneHotEncoder
+
+        train = pd.DataFrame({"tenure": [1.0, 2.0, 3.0], "plan": ["a", "b", "a"]})
+        pipeline = ColumnTransformer([
+            ("numeric", SimpleImputer(strategy="mean"), ["tenure"]),
+            ("categorical", Pipeline([
+                ("imputer", SimpleImputer(strategy="constant", fill_value="missing")),
+                ("encoder", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+            ]), ["plan"]),
+        ]).fit(train)
+
+        (response,), _columns, rows = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            ["tenure", "plan"],
+            "classification",
+            1,
+            [("/predict", {"tenure": None})],
+            categorical=("plan",),
+            pipeline=pipeline,
+        )
+
+        assert response.status_code == 201, response.text
+        values = rows[0]["values"]
+        assert values[0] == 2.0  # mean of the training tenure
+        assert not any(math.isnan(v) for v in values)
+
+    def test_generated_api_reports_preprocessing_errors(
+        self, mock_settings: Settings, tmp_path: Path
+    ):
+        """A failing pipeline returns 422; the model never sees unprocessed input."""
+
+        class StubPipeline:
+            def transform(self, frame):
+                if "platinum" in frame["plan"].tolist():
+                    raise ValueError("Found unknown categories ['platinum'] in column 1")
+                return frame.assign(transformed=True)
+
+        gold = {"tenure": 1, "plan": "gold"}
+        platinum = {"tenure": 2, "plan": "platinum"}
+
+        (ok, bad, bad_batch), columns, _rows = self._serve_generated_api(
+            mock_settings,
+            tmp_path,
+            ["tenure", "plan"],
+            "classification",
+            1,
+            [
+                ("/predict", gold),
+                ("/predict", platinum),
+                ("/predict/batch", {"instances": [gold, platinum]}),
+            ],
+            categorical=("plan",),
+            pipeline=StubPipeline(),
+        )
+
+        assert ok.status_code == 201, ok.text
+        assert bad.status_code == 422, bad.text
+        assert "Preprocessing failed for input" in bad.json()["detail"]
+        assert "platinum" in bad.json()["detail"]
+        assert bad_batch.status_code == 422, bad_batch.text
+        assert "Preprocessing failed for instance 1" in bad_batch.json()["detail"]
+        # The model only ever received preprocessed rows: the good single
+        # request and the good first batch instance.
+        assert columns == [["tenure", "plan", "transformed"]] * 2
+
+    def test_execute_types_columns_from_feature_plan(
+        self,
+        agent_context: AgentContext,
+        mock_settings: Settings,
+        mock_llm_gateway: MagicMock,
+        mock_artifact_store: ArtifactStore,
+    ):
+        """The agent reads column types from FeatureEngineerAgent's plan."""
+        agent_context.previous_results = {
+            "AutoMLAgent": AgentResult(
+                agent_name="AutoMLAgent",
+                status=AgentStatus.COMPLETED,
+                outputs={"task_type": "classification"},
+            ),
+            "FeatureEngineerAgent": AgentResult(
+                agent_name="FeatureEngineerAgent",
+                status=AgentStatus.COMPLETED,
+                outputs={
+                    "target_column": "churned",
+                    "feature_plan": {
+                        # Plans can list the target; it must not become an API input
+                        "numeric_features": {"columns": ["tenure", "churned"]},
+                        "categorical_features": {"columns": ["plan"]},
+                    },
+                },
+            ),
+        }
+        agent = APIWrapperAgent(
+            settings=mock_settings, llm_gateway=mock_llm_gateway, artifact_store=mock_artifact_store
+        )
+
+        result = agent.execute(agent_context)
+
+        assert result.status == AgentStatus.COMPLETED, result.error
+        code = mock_artifact_store.load_text(result.outputs["api_code_artifact_id"])
+        assert "    tenure: Optional[float] = Field(None, alias='tenure'" in code
+        assert "    plan: Optional[str] = Field(None, alias='plan'" in code
+        assert "alias='churned'" not in code
+        schema = result.outputs["api_config"]["input_schema"]
+        assert schema["tenure"]["type"] == "float"
+        assert schema["plan"]["type"] == "string"
+        assert "churned" not in schema
 
 
 # =============================================================================

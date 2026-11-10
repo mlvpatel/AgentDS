@@ -364,6 +364,37 @@ Do not include any other text, markdown formatting, or code blocks. Only output 
             )
             raise ValueError(f"Failed to parse LLM response: {e}") from e
 
+    @staticmethod
+    def resolve_data_path(context: AgentContext, *agent_names: str) -> str:
+        """
+        Find the dataset to work on from upstream agents.
+
+        Checks agent_names in order (nearest upstream first) and returns the
+        data_path of the first one that completed and produced a dataset.
+        Agents that failed, were skipped, or output no data_path are passed
+        over, so an analysis-only or skipped step doesn't break the chain.
+
+        Args:
+            context: Execution context holding previous results
+            *agent_names: Upstream agents to check, nearest first
+
+        Returns:
+            Path of the dataset to load
+
+        Raises:
+            ValueError: If none of the agents produced a dataset
+        """
+        for name in agent_names:
+            result = context.previous_results.get(name)
+            if result is None or result.status != AgentStatus.COMPLETED:
+                continue
+            data_path = result.outputs.get("data_path")
+            if data_path:
+                return str(data_path)
+        raise ValueError(
+            f"No input dataset: none of {', '.join(agent_names)} completed with a data_path"
+        )
+
     def save_artifact(
         self,
         job_id: str,

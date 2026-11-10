@@ -539,6 +539,8 @@ Namespace: agentds
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/health` | GET | Health check |
+| `/api/health/live` | GET | Liveness probe (process only) |
+| `/api/health/ready` | GET | Readiness probe (job queue reachable; 503 if not) |
 | `/api/pipeline/start` | POST | Start pipeline |
 | `/api/pipeline/status/{job_id}` | GET | Get status |
 | `/api/pipeline/cancel/{job_id}` | POST | Cancel pipeline |

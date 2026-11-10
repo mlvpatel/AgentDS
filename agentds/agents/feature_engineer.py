@@ -105,18 +105,10 @@ Be thoughtful about feature engineering - it significantly impacts model perform
         )
 
         try:
-            # Get input data
-            prev_result = context.previous_results.get("EDACopilotAgent")
-            if not prev_result:
-                prev_result = context.previous_results.get("DataCleaningAgent")
-            if not prev_result:
-                prev_result = context.previous_results.get("DataLoaderAgent")
-            if not prev_result:
-                raise ValueError("No input data from previous agent")
-
-            data_path = prev_result.outputs.get("data_path")
-            if not data_path:
-                raise ValueError("No data_path in previous output")
+            # Get input data from the nearest upstream agent that produced one
+            data_path = self.resolve_data_path(
+                context, "EDACopilotAgent", "DataCleaningAgent", "DataLoaderAgent"
+            )
 
             # Load data
             df = pl.read_parquet(data_path)

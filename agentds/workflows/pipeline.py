@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
+import numpy as np
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
@@ -25,10 +27,10 @@ from agentds.agents import (
     AgentResult,
     BaseAgent,
 )
-from agentds.agents.base import AgentContext
+from agentds.agents.base import AgentContext, AgentStatus
 from agentds.core.artifact_store import ArtifactStore
 from agentds.core.config import Settings, get_settings
-from agentds.core.job_queue import JobQueue
+from agentds.core.job_queue import Job, JobQueue
 from agentds.core.llm_gateway import LLMGateway
 from agentds.core.logger import LogContext, get_logger
 
@@ -65,8 +67,8 @@ class PipelineState(TypedDict, total=False):
     output_destination: str
 
     # Execution state
-    current_phase: str
-    current_agent: str
+    current_phase: str | None
+    current_agent: str | None  # Next agent to run; None once every agent has run
     agent_results: dict[str, dict[str, Any]]
 
     # Human-in-the-loop
@@ -80,7 +82,84 @@ class PipelineState(TypedDict, total=False):
 
     # Completion
     completed: bool
+    stopped: bool
     final_outputs: dict[str, Any]
+
+
+# Node the graph pauses before when human review is required.
+REVIEW_NODE = "human_review"
+
+# Actions that can resume a paused pipeline.
+REVIEW_ACTIONS = frozenset(
+    {
+        AgentAction.APPROVE_AND_CONTINUE,
+        AgentAction.RERUN,
+        AgentAction.RERUN_WITH_FEEDBACK,
+        AgentAction.SKIP,
+        AgentAction.STOP_PIPELINE,
+        AgentAction.ROLLBACK,
+    }
+)
+
+
+def _state_safe(value: Any) -> Any:
+    """
+    Convert agent output into plain data that checkpoints and JSON can hold.
+
+    Agents may return objects such as DataFrames or Paths. LangGraph's
+    checkpointer cannot serialize arbitrary objects, so those are replaced with
+    a short placeholder; downstream agents use file paths, not in-memory frames.
+    """
+    # Enum and numpy checks come first: str-enums and numpy floats subclass
+    # the builtin types below.
+    if isinstance(value, Enum):
+        return _state_safe(value.value)
+    if isinstance(value, np.generic):
+        return value.item()
+    if value is None or isinstance(value, bool | int | float):
+        return value
+    if isinstance(value, str):
+        return str(value)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, datetime | date):
+        return value.isoformat()
+    if isinstance(value, np.ndarray):
+        return _state_safe(value.tolist())
+    if isinstance(value, BaseModel):
+        return _state_safe(value.model_dump())
+    if isinstance(value, dict):
+        return {str(key): _state_safe(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set | frozenset):
+        return [_state_safe(item) for item in value]
+    return f"<{type(value).__name__} not stored in pipeline state>"
+
+
+def create_pipeline_job(
+    job_queue: JobQueue,
+    config: PipelineConfig,
+    data_source: str,
+    task_description: str,
+    output_destination: str | None = None,
+    job_id: str | None = None,
+) -> Job:
+    """
+    Record a pipeline run in the job queue before it starts.
+
+    The job keeps everything needed to run or resume the pipeline in another
+    process: the inputs and the pipeline configuration.
+    """
+    return job_queue.create_job(
+        name=f"Pipeline: {task_description[:50]}",
+        task="full_pipeline",
+        kwargs={
+            "data_source": data_source,
+            "task_description": task_description,
+            "output_destination": output_destination,
+            "pipeline_config": config.model_dump(mode="json"),
+        },
+        job_id=job_id,
+    )
 
 
 @dataclass
@@ -130,6 +209,7 @@ class AgentDSPipeline:
         self,
         config: PipelineConfig | None = None,
         settings: Settings | None = None,
+        job_queue: JobQueue | None = None,
     ) -> None:
         """
         Initialize pipeline.
@@ -137,20 +217,35 @@ class AgentDSPipeline:
         Args:
             config: Pipeline configuration
             settings: Application settings
+            job_queue: Job queue to record jobs in. Pass the caller's queue so
+                job status can be looked up by the returned job_id.
         """
         self.config = config or PipelineConfig()
         self.settings = settings or get_settings()
         self.llm_gateway = LLMGateway(self.settings)
         self.artifact_store = ArtifactStore(self.settings)
-        self.job_queue = JobQueue(self.settings)
+        self.job_queue = job_queue or JobQueue(self.settings)
 
         # Initialize agents
         self._agents: dict[str, BaseAgent] = {}
         self._init_agents()
 
-        # Build graph
+        # Build graph. Pausing for review needs a checkpointer to resume from,
+        # so human-in-the-loop always gets one.
         self._graph = self._build_graph()
-        self._checkpointer = MemorySaver() if self.config.checkpoint_enabled else None
+        needs_checkpointer = self.config.checkpoint_enabled or self.config.human_in_loop
+        self._checkpointer = MemorySaver() if needs_checkpointer else None
+        self._compiled = self._graph.compile(
+            checkpointer=self._checkpointer,
+            interrupt_before=[REVIEW_NODE] if self.config.human_in_loop else None,
+        )
+
+    def agent_sequence(self) -> list[str]:
+        """Agents in execution order for the configured phases."""
+        sequence: list[str] = []
+        for phase in self.config.phases:
+            sequence.extend(self.PHASE_AGENTS.get(phase, []))
+        return sequence
 
     def _init_agents(self) -> None:
         """Initialize all agent instances."""
@@ -171,7 +266,7 @@ class AgentDSPipeline:
         # Add nodes
         graph.add_node("preflight", self._preflight_node)
         graph.add_node("run_agent", self._run_agent_node)
-        graph.add_node("human_review", self._human_review_node)
+        graph.add_node(REVIEW_NODE, self._human_review_node)
         graph.add_node("handle_action", self._handle_action_node)
         graph.add_node("finalize", self._finalize_node)
         graph.add_node("error", self._error_node)
@@ -185,6 +280,7 @@ class AgentDSPipeline:
             self._route_after_preflight,
             {
                 "run_agent": "run_agent",
+                "finalize": "finalize",
                 "error": "error",
             },
         )
@@ -193,14 +289,14 @@ class AgentDSPipeline:
             "run_agent",
             self._route_after_agent,
             {
-                "human_review": "human_review",
+                REVIEW_NODE: REVIEW_NODE,
                 "run_agent": "run_agent",
                 "finalize": "finalize",
                 "error": "error",
             },
         )
 
-        graph.add_edge("human_review", "handle_action")
+        graph.add_edge(REVIEW_NODE, "handle_action")
 
         graph.add_conditional_edges(
             "handle_action",
@@ -228,13 +324,10 @@ class AgentDSPipeline:
             return state
 
         # Set initial execution state
-        agents_to_run = []
-        for phase in self.config.phases:
-            agents_to_run.extend(self.PHASE_AGENTS.get(phase, []))
-
-        if agents_to_run:
-            state["current_agent"] = agents_to_run[0]
-            state["current_phase"] = self._get_agent_phase(agents_to_run[0])
+        agents_to_run = self.agent_sequence()
+        first_agent = agents_to_run[0] if agents_to_run else None
+        state["current_agent"] = first_agent
+        state["current_phase"] = self._get_agent_phase(first_agent) if first_agent else None
 
         state["agent_results"] = {}
         state["retry_count"] = 0
@@ -326,30 +419,49 @@ class AgentDSPipeline:
         # Run agent
         try:
             result = agent.run(context)
-
-            # Store result
-            state["agent_results"] = state.get("agent_results", {})
-            state["agent_results"][agent_name] = result.model_dump()
-
-            # Set approval state if human-in-loop enabled
-            if self.config.human_in_loop and result.requires_approval:
-                state["awaiting_approval"] = True
-            else:
-                state["awaiting_approval"] = False
-
-            # Clear user feedback after use
-            state["user_feedback"] = None
-
         except Exception as e:
             logger.error("Agent execution failed", agent=agent_name, error=str(e))
             state["error"] = f"Agent {agent_name} failed: {e}"
+            return state
 
+        # Store a checkpoint-safe copy of the result (copy the dict rather than
+        # mutating the one held in the previous checkpoint).
+        agent_results = dict(state.get("agent_results") or {})
+        agent_results[agent_name] = _state_safe(result.model_dump())
+        state["agent_results"] = agent_results
+        state["user_feedback"] = None  # Feedback applies to one run only
+
+        failed = result.status == AgentStatus.FAILED
+        if self.config.human_in_loop and (failed or result.requires_approval):
+            # Pause for review. current_agent stays on this agent so the
+            # reviewer can rerun it, skip it or approve and move on.
+            state["awaiting_approval"] = True
+            return state
+
+        state["awaiting_approval"] = False
+        if failed:
+            state["error"] = f"Agent {agent_name} failed: {result.error or 'unknown error'}"
+            return state
+
+        # Advance here, inside a node: LangGraph discards state changes made
+        # in routing functions, so the router must only read current_agent.
+        self._advance_to_next_agent(state, agent_name)
         return state
 
+    def _advance_to_next_agent(self, state: PipelineState, from_agent: str | None) -> None:
+        """Point current_agent at the agent after from_agent (None when done)."""
+        next_agent = self._get_next_agent(from_agent)
+        state["current_agent"] = next_agent
+        if next_agent:
+            state["current_phase"] = self._get_agent_phase(next_agent)
+
     def _human_review_node(self, state: PipelineState) -> PipelineState:
-        """Wait for human review and action."""
-        # This node is typically handled externally via the web interface
-        # The graph will pause here until user_action is set
+        """Placeholder for the review step.
+
+        The graph is compiled with interrupt_before=[REVIEW_NODE], so execution
+        pauses before this node. resume() records the reviewer's action as this
+        node's output, and execution continues at handle_action.
+        """
         logger.info(
             "Awaiting human review",
             agent=state.get("current_agent"),
@@ -368,29 +480,27 @@ class AgentDSPipeline:
             agent=current_agent,
         )
 
-        if action == AgentAction.APPROVE_AND_CONTINUE.value:
-            state["awaiting_approval"] = False
-            state["current_agent"] = self._get_next_agent(current_agent)
+        state["awaiting_approval"] = False
 
-        elif action == AgentAction.RERUN.value or action == AgentAction.RERUN_WITH_FEEDBACK.value:
-            state["awaiting_approval"] = False
+        if action in (AgentAction.APPROVE_AND_CONTINUE.value, AgentAction.SKIP.value):
+            self._advance_to_next_agent(state, current_agent)
+
+        elif action in (AgentAction.RERUN.value, AgentAction.RERUN_WITH_FEEDBACK.value):
+            # current_agent is unchanged; user_feedback was set by resume()
             state["retry_count"] = state.get("retry_count", 0) + 1
-            # user_feedback should already be set
-
-        elif action == AgentAction.SKIP.value:
-            state["awaiting_approval"] = False
-            state["current_agent"] = self._get_next_agent(current_agent)
 
         elif action == AgentAction.STOP_PIPELINE.value:
             state["completed"] = True
-            state["error"] = "Pipeline stopped by user"
+            state["stopped"] = True
 
         elif action == AgentAction.ROLLBACK.value:
-            # Rollback to previous checkpoint
             prev_agent = self._get_previous_agent(current_agent)
             if prev_agent:
                 state["current_agent"] = prev_agent
-            state["awaiting_approval"] = False
+                state["current_phase"] = self._get_agent_phase(prev_agent)
+
+        else:
+            state["error"] = f"Unsupported review action: {action!r}"
 
         # Clear action
         state["user_action"] = None
@@ -419,12 +529,16 @@ class AgentDSPipeline:
         state["completed"] = True
         return state
 
+    # Routers only read state. LangGraph does not persist changes made here.
+
     def _route_after_preflight(
         self, state: PipelineState
-    ) -> Literal["run_agent", "error"]:
+    ) -> Literal["run_agent", "finalize", "error"]:
         """Route after pre-flight checks."""
         if state.get("error"):
             return "error"
+        if not state.get("current_agent"):
+            return "finalize"
         return "run_agent"
 
     def _route_after_agent(
@@ -433,17 +547,10 @@ class AgentDSPipeline:
         """Route after agent execution."""
         if state.get("error"):
             return "error"
-
         if state.get("awaiting_approval"):
-            return "human_review"
-
-        # Check if there are more agents
-        next_agent = self._get_next_agent(state.get("current_agent"))
-        if next_agent:
-            state["current_agent"] = next_agent
-            state["current_phase"] = self._get_agent_phase(next_agent)
+            return REVIEW_NODE
+        if state.get("current_agent"):
             return "run_agent"
-
         return "finalize"
 
     def _route_after_action(
@@ -452,10 +559,8 @@ class AgentDSPipeline:
         """Route after handling user action."""
         if state.get("error"):
             return "error"
-
-        if state.get("completed"):
+        if state.get("completed") or not state.get("current_agent"):
             return "finalize"
-
         return "run_agent"
 
     def _get_agent_phase(self, agent_name: str) -> str:
@@ -467,39 +572,19 @@ class AgentDSPipeline:
 
     def _get_next_agent(self, current_agent: str | None) -> str | None:
         """Get next agent in execution order."""
-        if not current_agent:
+        sequence = self.agent_sequence()
+        if current_agent not in sequence:
             return None
-
-        all_agents = []
-        for phase in self.config.phases:
-            all_agents.extend(self.PHASE_AGENTS.get(phase, []))
-
-        try:
-            idx = all_agents.index(current_agent)
-            if idx + 1 < len(all_agents):
-                return all_agents[idx + 1]
-        except ValueError:
-            pass
-
-        return None
+        idx = sequence.index(current_agent)
+        return sequence[idx + 1] if idx + 1 < len(sequence) else None
 
     def _get_previous_agent(self, current_agent: str | None) -> str | None:
         """Get previous agent in execution order."""
-        if not current_agent:
+        sequence = self.agent_sequence()
+        if current_agent not in sequence:
             return None
-
-        all_agents = []
-        for phase in self.config.phases:
-            all_agents.extend(self.PHASE_AGENTS.get(phase, []))
-
-        try:
-            idx = all_agents.index(current_agent)
-            if idx > 0:
-                return all_agents[idx - 1]
-        except ValueError:
-            pass
-
-        return None
+        idx = sequence.index(current_agent)
+        return sequence[idx - 1] if idx > 0 else None
 
     def run(
         self,
@@ -518,21 +603,28 @@ class AgentDSPipeline:
             job_id: Optional job identifier
 
         Returns:
-            Pipeline results
+            Pipeline results: ``job_id``, ``status`` (``completed``, ``failed``,
+            ``cancelled`` or ``awaiting_approval``), ``current_agent``,
+            ``progress_percent``, the graph ``state`` and the ``job`` record.
+            When ``status`` is ``awaiting_approval``, call :meth:`resume`.
         """
+        # Reuse the job record if the caller created it already (for example
+        # the API, before handing the run to a background worker)
+        job = self.job_queue.get_job(job_id) if job_id else None
         job_id = job_id or str(uuid.uuid4())
         output_destination = output_destination or str(self.settings.output_dir / job_id)
 
-        # Create job
-        job = self.job_queue.create_job(
-            name=f"Pipeline: {task_description[:50]}",
-            task="full_pipeline",
-            kwargs={
-                "data_source": data_source,
-                "task_description": task_description,
-                "output_destination": output_destination,
-            },
-        )
+        if job is None:
+            job = create_pipeline_job(
+                self.job_queue,
+                self.config,
+                data_source=data_source,
+                task_description=task_description,
+                output_destination=output_destination,
+                job_id=job_id,
+            )
+        job.mark_running()
+        self.job_queue.update_job(job)
 
         with LogContext(job_id=job_id):
             logger.info(
@@ -552,38 +644,17 @@ class AgentDSPipeline:
                 "awaiting_approval": False,
                 "retry_count": 0,
                 "completed": False,
+                "stopped": False,
             }
 
-            # Compile and run graph
-            compiled = self._graph.compile(checkpointer=self._checkpointer)
-
-            # For synchronous execution without human-in-loop
-            if not self.config.human_in_loop:
-                final_state = compiled.invoke(
-                    initial_state,
-                    config={"configurable": {"thread_id": job_id}},
-                )
-            else:
-                # Return compiled graph for external control
-                final_state = initial_state
-
-            # Update job
-            if final_state.get("completed"):
-                if final_state.get("error"):
-                    job.mark_failed(final_state["error"])
-                else:
-                    job.mark_completed(final_state.get("final_outputs"))
-            self.job_queue.update_job(job)
-
-            return {
-                "job_id": job_id,
-                "state": final_state,
-                "job": job.model_dump(),
-            }
+            # Runs until the pipeline finishes, fails, or (human-in-the-loop)
+            # pauses before REVIEW_NODE.
+            final_state = self._invoke(initial_state, job_id, job)
+            return self._sync_job(job_id, job, final_state)
 
     def get_compiled_graph(self):
-        """Get compiled graph for external control."""
-        return self._graph.compile(checkpointer=self._checkpointer)
+        """Get the compiled graph (shares this pipeline's checkpointer)."""
+        return self._compiled
 
     def resume(
         self,
@@ -592,39 +663,119 @@ class AgentDSPipeline:
         user_feedback: str | None = None,
     ) -> dict[str, Any]:
         """
-        Resume pipeline after human review.
+        Resume a pipeline that is paused for human review.
 
         Args:
-            job_id: Job identifier
-            user_action: User action (approve, rerun, skip, etc.)
-            user_feedback: Optional feedback for rerun
+            job_id: Job identifier returned by :meth:`run`
+            user_action: An :class:`AgentAction` value: approve_and_continue,
+                rerun, rerun_with_feedback, skip, stop_pipeline or rollback
+            user_feedback: Optional feedback passed to the agent on rerun
 
         Returns:
-            Updated pipeline state
+            Pipeline results, in the same shape as :meth:`run`
+
+        Raises:
+            ValueError: If the action is not a review action, the pipeline is
+                not in human-in-the-loop mode, or the job is not awaiting review.
         """
-        compiled = self._graph.compile(checkpointer=self._checkpointer)
+        try:
+            action = AgentAction(user_action)
+        except ValueError:
+            action = None
+        if action not in REVIEW_ACTIONS:
+            allowed = sorted(a.value for a in REVIEW_ACTIONS)
+            raise ValueError(f"Unsupported review action {user_action!r}; expected one of {allowed}")
 
-        # Get current state
-        config: RunnableConfig = {"configurable": {"thread_id": job_id}}
-        state = compiled.get_state(config)
+        if not self.config.human_in_loop:
+            raise ValueError("Pipeline is not running in human-in-the-loop mode")
 
-        if not state:
-            raise ValueError(f"No state found for job: {job_id}")
+        config = self._thread_config(job_id)
+        job = self.job_queue.get_job(job_id)
+        update: dict[str, Any] = {"user_action": action.value, "user_feedback": user_feedback}
 
-        # Update state with user action
-        update = {
-            "user_action": user_action,
-            "user_feedback": user_feedback,
-            "awaiting_approval": False,
-        }
+        if REVIEW_NODE not in self._compiled.get_state(config).next:
+            # Not paused in this process (for example a background worker
+            # that didn't run the first part): restore the state the run
+            # saved on its job record when it paused.
+            if not (job and job.pipeline_state):
+                raise ValueError(f"Job {job_id} is not awaiting review")
+            update = {**job.pipeline_state, **update}
 
-        # Continue execution
-        final_state = compiled.invoke(
-            update,
-            config=config,
+        # Record the decision as the review node's output; execution then
+        # continues at handle_action.
+        self._compiled.update_state(config, update, as_node=REVIEW_NODE)
+
+        if job:
+            job.resume(user_feedback)
+            self.job_queue.update_job(job)
+
+        with LogContext(job_id=job_id):
+            logger.info("Resuming pipeline", job_id=job_id, action=action.value)
+            final_state = self._invoke(None, job_id, job)
+            return self._sync_job(job_id, job, final_state)
+
+    @staticmethod
+    def _thread_config(job_id: str) -> RunnableConfig:
+        return {"configurable": {"thread_id": job_id}}
+
+    def _invoke(
+        self, graph_input: PipelineState | None, job_id: str, job: Job | None
+    ) -> PipelineState:
+        """Invoke the graph, marking the job failed if execution raises."""
+        try:
+            return self._compiled.invoke(graph_input, config=self._thread_config(job_id))
+        except Exception as e:
+            logger.error("Pipeline execution failed", job_id=job_id, error=str(e))
+            if job:
+                job.mark_failed(f"Pipeline execution failed: {e}")
+                self.job_queue.update_job(job)
+            raise
+
+    def _sync_job(
+        self, job_id: str, job: Job | None, state: PipelineState
+    ) -> dict[str, Any]:
+        """Record the outcome of a run or resume on the job and build the result."""
+        sequence = self.agent_sequence()
+        finished = sum(
+            1
+            for name, data in (state.get("agent_results") or {}).items()
+            if name in sequence and data.get("status") == AgentStatus.COMPLETED.value
         )
+        current_agent = state.get("current_agent")
 
+        if state.get("stopped"):
+            status = "cancelled"
+        elif state.get("completed"):
+            status = "failed" if state.get("error") else "completed"
+        elif state.get("awaiting_approval"):
+            status = "awaiting_approval"
+        else:
+            status = "running"
+
+        if job:
+            job.update_progress(finished, len(sequence), agent=current_agent)
+            if status == "cancelled":
+                job.mark_cancelled()
+            elif status == "failed":
+                job.mark_failed(state.get("error") or "Pipeline failed")
+            elif status == "completed":
+                job.mark_completed(state.get("final_outputs"))
+            elif status == "awaiting_approval":
+                job.mark_paused()
+            # Keep the paused state with the job so any process can resume it
+            job.pipeline_state = dict(state) if status == "awaiting_approval" else None
+            self.job_queue.update_job(job)
+
+        if status == "completed":
+            progress = 100.0
+        else:
+            progress = finished / len(sequence) * 100 if sequence else 0.0
         return {
             "job_id": job_id,
-            "state": final_state,
+            "status": status,
+            "current_agent": current_agent,
+            "progress_percent": progress,
+            "error": state.get("error"),
+            "state": state,
+            "job": job.model_dump(mode="json") if job else None,
         }

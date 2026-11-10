@@ -213,13 +213,15 @@ class APIKeyAuthenticator:
 
     def validate(self, key: str | None) -> bool:
         """Validate an API key."""
-        if not key:
-            return False
-
-        # If no keys configured, allow all (development mode)
+        # If no keys configured, allow all (development mode), with or without
+        # a key; before, keyless requests were rejected while any made-up key
+        # was accepted
         if not self.api_keys:
             logger.warning("No API keys configured - allowing all requests")
             return True
+
+        if not key:
+            return False
 
         return key in self.api_keys
 
@@ -263,6 +265,8 @@ class AuthenticationMiddleware(AbstractMiddleware):
     # Paths that don't require authentication
     EXEMPT_PATHS = {
         "/api/health",
+        "/api/health/live",
+        "/api/health/ready",
         "/api/docs",
         "/api/openapi.json",
         "/api/redoc",

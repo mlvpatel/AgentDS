@@ -9,7 +9,12 @@ Author: Malav Patel
 from __future__ import annotations
 
 import json
+import keyword
+import re
+from collections.abc import Collection
 from typing import Any
+
+from pydantic import BaseModel
 
 from agentds.agents.base import (
     AgentContext,
@@ -119,11 +124,24 @@ Output your API configuration in JSON format:
             if not input_features:
                 input_features = feature_names
 
+            # The plan can list the target column; callers don't send it
+            target_column = fe_result.outputs.get("target_column") if fe_result else None
+            input_features = [name for name in input_features if name != target_column]
+
+            # Categorical columns take string values; everything else is numeric
+            categorical_features = set(
+                fe_plan.get("categorical_features", {}).get("columns", []) if fe_plan else []
+            )
+
             # Get API configuration from LLM
-            api_config = self._get_api_config(input_features, task_type, context)
+            api_config = self._get_api_config(
+                input_features, task_type, context, categorical_features
+            )
 
             # Generate API code
-            api_code = self._generate_api_code(api_config, input_features, task_type)
+            api_code = self._generate_api_code(
+                api_config, input_features, task_type, categorical_features=categorical_features
+            )
 
             # Generate requirements
             requirements = self._generate_requirements()
@@ -166,11 +184,13 @@ Output your API configuration in JSON format:
         feature_names: list[str],
         task_type: str,
         context: AgentContext,
+        categorical_features: Collection[str] = (),
     ) -> dict[str, Any]:
         """Get API configuration from LLM."""
         prompt = f"""Generate API configuration for model serving.
 
 Features: {feature_names[:20]}
+Categorical features (string values): {sorted(categorical_features)[:20]}
 Task type: {task_type}
 Task description: {context.task_description or 'ML prediction API'}
 
@@ -188,7 +208,13 @@ Provide input/output schema and endpoint configuration as JSON.
             logger.warning("Failed to parse API config", error=str(e))
 
         # Default configuration
-        input_schema = {name: {"type": "float", "description": f"Feature {name}"} for name in feature_names[:20]}
+        input_schema = {
+            name: {
+                "type": "string" if name in categorical_features else "float",
+                "description": f"Feature {name}",
+            }
+            for name in feature_names[:20]
+        }
 
         return {
             "framework": "litestar",
@@ -204,20 +230,73 @@ Provide input/output schema and endpoint configuration as JSON.
             },
         }
 
+    @staticmethod
+    def _field_identifiers(column_names: list[str]) -> list[str]:
+        """
+        Turn column names into unique, safe Pydantic field names.
+
+        Column names can contain any characters, start with a digit, or be
+        Python keywords. Each one is mapped to an ASCII identifier that is not
+        a keyword, does not start with an underscore (Pydantic treats those as
+        private attributes), does not use Pydantic's ``model_`` prefix, and
+        does not shadow a BaseModel attribute. Duplicates get a numeric suffix.
+        """
+        used: set[str] = set()
+        identifiers = []
+        for name in column_names:
+            ident = re.sub(r"[^0-9A-Za-z_]", "_", str(name)).lstrip("_") or "feature"
+            if (
+                ident[0].isdigit()
+                or keyword.iskeyword(ident)
+                or ident.startswith("model_")
+                or hasattr(BaseModel, ident)
+            ):
+                ident = f"f_{ident}"
+            unique, suffix = ident, 2
+            while unique in used:
+                unique = f"{ident}_{suffix}"
+                suffix += 1
+            used.add(unique)
+            identifiers.append(unique)
+        return identifiers
+
     def _generate_api_code(
         self,
         config: dict[str, Any],
         feature_names: list[str],
         task_type: str,
+        categorical_features: Collection[str] = (),
     ) -> str:
-        """Generate Litestar API code."""
-        # Generate Pydantic model fields
-        input_fields = []
-        for name in feature_names[:50]:
-            safe_name = name.replace(" ", "_").replace("-", "_")
-            input_fields.append(f"    {safe_name}: float = Field(..., description=\"Feature {name}\")")
+        """Generate Litestar API code.
 
-        input_fields_str = "\n".join(input_fields) if input_fields else "    value: float = Field(..., description=\"Input value\")"
+        Args:
+            config: API configuration
+            feature_names: Raw input columns the model was trained on
+            task_type: "classification" or "regression"
+            categorical_features: Columns that take string values; all other
+                columns are typed as float
+        """
+        # Generate Pydantic model fields. Each field is aliased to its original
+        # column name, so requests use the real column names and the model
+        # receives a DataFrame with the columns it was trained on. Names are
+        # emitted with repr() so any characters produce a valid string literal.
+        # Every field is optional: an omitted or null value is passed to the
+        # preprocessing pipeline as missing, for its imputers to fill.
+        columns = [str(name) for name in feature_names[:50]]
+        categorical = {str(name) for name in categorical_features}
+        input_fields = [
+            f"    {ident}: Optional[{'str' if column in categorical else 'float'}] = Field("
+            f"None, alias={column!r}, description={'Feature ' + column!r})"
+            for ident, column in zip(self._field_identifiers(columns), columns, strict=True)
+        ]
+        numeric_columns = [column for column in columns if column not in categorical]
+
+        if not input_fields:
+            input_fields = ['    value: Optional[float] = Field(None, description="Input value")']
+            numeric_columns = ["value"]
+
+        input_fields_str = "\n".join(input_fields)
+        numeric_columns_literal = repr(numeric_columns)
 
         code = f'''"""
 AgentDS Generated API Server.
@@ -230,6 +309,7 @@ Generated by: AgentDS
 
 from __future__ import annotations
 
+import logging
 import joblib
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -238,9 +318,12 @@ import numpy as np
 import pandas as pd
 from litestar import Litestar, get, post
 from litestar.config.cors import CORSConfig
+from litestar.exceptions import HTTPException
 from litestar.openapi import OpenAPIConfig
-from litestar.status_codes import HTTP_200_OK, HTTP_500_INTERNAL_SERVER_ERROR
-from pydantic import BaseModel, Field
+from litestar.status_codes import HTTP_422_UNPROCESSABLE_ENTITY
+from pydantic import BaseModel, ConfigDict, Field
+
+logger = logging.getLogger("agentds.generated_api")
 
 
 # =============================================================================
@@ -248,7 +331,10 @@ from pydantic import BaseModel, Field
 # =============================================================================
 
 class PredictionInput(BaseModel):
-    """Input schema for prediction."""
+    """Input schema for prediction. Send features by their original column names."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
 {input_fields_str}
 
 
@@ -288,6 +374,9 @@ class ErrorResponse(BaseModel):
 MODEL_PATH = Path("model/model.pkl")
 PIPELINE_PATH = Path("model/preprocessing_pipeline.pkl")
 
+# Input columns that hold numbers; all others hold categories
+NUMERIC_COLUMNS = {numeric_columns_literal}
+
 _model = None
 _pipeline = None
 
@@ -317,6 +406,32 @@ def get_pipeline():
     return _pipeline
 
 
+def prepare_features(instance: PredictionInput, label: str = "input") -> Any:
+    """Build the model input for one instance.
+
+    Creates a one-row DataFrame keyed by the original column names and applies
+    the preprocessing pipeline when one is loaded. Missing inputs arrive as
+    None and are converted to NaN, the marker scikit-learn imputers look for.
+    If preprocessing fails, the request is rejected with 422 instead of sending
+    unprocessed features to the model, which would return a confident but
+    meaningless prediction.
+    """
+    features = pd.DataFrame([instance.model_dump(by_alias=True)])
+    features = features.astype(dict.fromkeys(NUMERIC_COLUMNS, "float64"))
+    features = features.where(features.notna(), np.nan)
+    pipeline = get_pipeline()
+    if pipeline is None:
+        return features
+    try:
+        return pipeline.transform(features)
+    except Exception as e:
+        logger.exception("Preprocessing failed for %s", label)
+        raise HTTPException(
+            status_code=HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Preprocessing failed for " + label + ": " + str(e),
+        ) from e
+
+
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
@@ -339,17 +454,7 @@ async def predict(data: PredictionInput) -> PredictionOutput:
     if model is None:
         raise ValueError("Model not loaded")
 
-    # Create DataFrame with correct column names
-    input_data = {field: [getattr(data, field)] for field in data.model_fields.keys()}  # type: ignore[name-defined]
-    features = pd.DataFrame(input_data)
-
-    # Apply preprocessing if available
-    pipeline = get_pipeline()
-    if pipeline is not None:
-        try:
-            features = pipeline.transform(features)
-        except Exception:
-            pass  # Use raw features if pipeline fails
+    features = prepare_features(data)
 
     # Make prediction
     prediction = model.predict(features)[0]
@@ -377,17 +482,8 @@ async def predict_batch(data: BatchInput) -> BatchOutput:
         raise ValueError("Model not loaded")
 
     predictions = []
-    for instance in data.instances:
-        # Create DataFrame for single instance
-        input_data = {field: [getattr(instance, field)] for field in instance.model_fields.keys()}  # type: ignore[name-defined]
-        features = pd.DataFrame(input_data)
-
-        pipeline = get_pipeline()
-        if pipeline is not None:
-            try:
-                features = pipeline.transform(features)
-            except Exception:
-                pass
+    for index, instance in enumerate(data.instances):
+        features = prepare_features(instance, "instance " + str(index))
 
         pred = model.predict(features)[0]
 
