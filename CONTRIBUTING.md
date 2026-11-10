@@ -57,9 +57,20 @@ source venv/bin/activate  # Linux/Mac
 
 ### Install Development Dependencies
 
+CI installs the exact versions pinned in `uv.lock`. To get the same environment locally, use [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv sync --locked --extra dev   # creates .venv from uv.lock
+source .venv/bin/activate
+```
+
+Or with pip (resolves the latest versions allowed by `pyproject.toml`, which may differ from CI):
+
 ```bash
 pip install -e ".[dev]"
 ```
+
+When you add, remove or change a dependency in `pyproject.toml`, run `uv lock` and commit the updated `uv.lock`. CI fails if the lockfile is out of date.
 
 ### Setup Pre-commit Hooks
 
