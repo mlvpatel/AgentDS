@@ -43,7 +43,7 @@ GET /api/jobs?api_key=your-api-key-here
 }
 ```
 
-> **Note:** In development mode with no API keys configured, all requests are allowed.
+> **Warning:** If `API_KEYS` is empty, the API accepts every request, with or without a key. This depends only on whether keys are configured, not on `ENVIRONMENT`, so it applies in production too. Always set `API_KEYS` (comma-separated, e.g. `API_KEYS=key1,key2`) on any deployment that is reachable by others. The server logs `No API keys configured - allowing all requests` when this happens.
 
 ### Rate Limiting
 
