@@ -43,15 +43,19 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Upgrade pip
-        run: pip install --upgrade pip setuptools wheel
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.32"
+          enable-cache: true
 
-      - name: Install dependencies
-        run: |
-          pip install -e ".[dev]"
+      # --locked installs exactly what uv.lock pins, and fails if uv.lock is
+      # out of date with pyproject.toml (run `uv lock` after changing deps).
+      - name: Install dependencies (from uv.lock)
+        run: uv sync --locked --extra dev --python ${{ env.PYTHON_VERSION }}
 
       - name: Run MyPy
-        run: mypy agentds/ --ignore-missing-imports
+        run: uv run --locked mypy agentds/ --ignore-missing-imports
 
   security:
     name: Security Check
@@ -90,24 +94,18 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Cache pip packages
-        uses: actions/cache@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          version: "0.11.32"
+          enable-cache: true
 
-      - name: Upgrade pip
-        run: pip install --upgrade pip setuptools wheel
-
-      - name: Install dependencies
-        run: |
-          pip install -e ".[dev]"
+      - name: Install dependencies (from uv.lock)
+        run: uv sync --locked --extra dev --python ${{ matrix.python-version }}
 
       - name: Run tests with coverage
         run: |
-          pytest tests/ -v --cov=agentds --cov-report=xml --cov-report=term
+          uv run --locked pytest tests/ -v --cov=agentds --cov-report=xml --cov-report=term
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
