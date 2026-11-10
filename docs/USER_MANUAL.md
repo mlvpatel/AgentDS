@@ -43,8 +43,9 @@ python -m venv venv
 source venv/bin/activate  # Linux/Mac
 # or: venv\Scripts\activate  # Windows
 
-# Install dependencies
+# Install pinned dependencies, then AgentDS itself (adds the `agentds` command)
 pip install -r requirements.txt
+pip install --no-deps -e .
 
 # Copy and configure environment
 cp .env.example .env

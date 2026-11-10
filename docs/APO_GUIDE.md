@@ -126,8 +126,10 @@ AgentDS integrates with [Microsoft Agent Lightning](https://github.com/microsoft
 
 ### Installation
 
+Agent Lightning is AgentDS's `apo` extra. It is already included if you installed from `requirements.txt`; otherwise:
+
 ```bash
-pip install agentlightning[apo]>=0.2.0
+pip install -e ".[apo]"
 ```
 
 ### How Integration Works
