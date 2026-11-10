@@ -275,8 +275,6 @@ class TestAPIEndpoints:
 
         app = create_api(settings=test_settings)
         with TestClient(app) as client:
-            # With no keys configured any key is accepted, but one must be present.
-            client.headers["X-API-Key"] = "dev-key"
             yield client
 
     def test_health_check(self, client) -> None:
