@@ -60,12 +60,11 @@ rm -rf venv
 python -m venv venv
 source venv/bin/activate
 
-# Install with fresh pip
+# Install with fresh pip: requirements.txt pins every package to a
+# known-compatible version, so this avoids resolver conflicts
 pip install --upgrade pip
 pip install -r requirements.txt
-
-# If specific package conflicts
-pip install --no-deps package_name
+pip install --no-deps -e .
 ```
 
 ---
