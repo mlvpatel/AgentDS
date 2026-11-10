@@ -43,8 +43,8 @@ jobs:
         with:
           version: "0.11.32"
 
-      # requirements.txt is generated from uv.lock (it is what Docker and the
-      # pip install docs use). Regenerate it in place and fail on any diff.
+      # requirements.txt is generated from uv.lock (it is what the pip install
+      # docs use). Regenerate it in place and fail on any diff.
       # Dependabot PRs are fixed automatically by dependabot-requirements.yml.
       - name: Regenerate requirements.txt and compare
         run: |
@@ -136,6 +136,22 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Builds the image from uv.lock (fails if the lock is out of date) and
+      # checks that the installed app and CLI work inside it.
+      - name: Build image
+        run: docker build -f docker/Dockerfile -t agentds:ci .
+
+      - name: Smoke test the image
+        run: |
+          docker run --rm agentds:ci agentds --help
+          docker run --rm agentds:ci python -c "import agentds, agentds.web.app, agentds.web.api.webhooks, agentds.workflows.pipeline; print('agentds', agentds.__version__)"
 
   build:
     name: Build

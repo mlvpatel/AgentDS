@@ -1,0 +1,14 @@
+# Keep the Docker build context small; the Dockerfile copies only what it needs.
+.git
+.venv
+venv
+**/__pycache__
+*.pyc
+.mypy_cache
+.pytest_cache
+.ruff_cache
+outputs
+logs
+temp
+checkpoints
+.env

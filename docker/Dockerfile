@@ -7,7 +7,7 @@
 # -----------------------------------------------------------------------------
 # Stage 1: Builder
 # -----------------------------------------------------------------------------
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
@@ -17,16 +17,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
-COPY requirements.txt .
+# uv installs exactly what uv.lock pins (same version as CI)
+RUN pip install --no-cache-dir uv==0.11.32
 
-# Create wheels for all dependencies
-RUN pip wheel --no-cache-dir --no-deps --wheel-dir /build/wheels -r requirements.txt
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+# Install dependencies from the lockfile first, for better layer caching.
+# --locked fails the build if uv.lock is out of date with pyproject.toml.
+# Runtime dependencies plus the `all` and `apo` extras, no dev tools
+# (the same set as requirements.txt).
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --locked --no-dev --extra all --extra apo --no-install-project
+
+# Then install AgentDS itself (non-editable, so the venv is self-contained)
+COPY agentds/ ./agentds/
+RUN uv sync --locked --no-dev --extra all --extra apo --no-editable
 
 # -----------------------------------------------------------------------------
 # Stage 2: Runtime
 # -----------------------------------------------------------------------------
-FROM python:3.11-slim as runtime
+FROM python:3.11-slim AS runtime
 
 # Labels
 LABEL maintainer="Malav Patel <malav.patel203@gmail.com>"
@@ -43,15 +56,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy wheels from builder and install
-COPY --from=builder /build/wheels /wheels
-RUN pip install --no-cache-dir /wheels/* && rm -rf /wheels
+# Copy the locked virtualenv (dependencies and AgentDS) from the builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy application code
-COPY --chown=agentds:agentds agentds/ ./agentds/
+# Runtime configuration (read relative to the working directory)
 COPY --chown=agentds:agentds config/ ./config/
-COPY --chown=agentds:agentds pyproject.toml .
-COPY --chown=agentds:agentds README.md .
 
 # Create directories
 RUN mkdir -p /app/outputs /app/logs /app/temp /app/checkpoints \
