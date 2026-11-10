@@ -72,6 +72,12 @@ pip install -e ".[dev]"
 
 When you add, remove or change a dependency in `pyproject.toml`, run `uv lock` and commit the updated `uv.lock`. CI fails if the lockfile is out of date.
 
+`requirements.txt` is generated from `uv.lock` (runtime dependencies plus the `all` and `apo` extras, no dev tools) and is what the Docker image installs. After `uv lock`, regenerate it with the command in its header:
+
+```bash
+uv export --frozen --no-dev --extra all --extra apo --no-emit-project --format requirements-txt -o requirements.txt
+```
+
 ### Setup Pre-commit Hooks
 
 ```bash
