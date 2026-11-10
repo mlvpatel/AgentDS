@@ -32,6 +32,28 @@ jobs:
       - name: Run Ruff
         run: ruff check .
 
+  requirements-sync:
+    name: requirements.txt matches uv.lock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.32"
+
+      # requirements.txt is generated from uv.lock (it is what Docker and the
+      # pip install docs use). Regenerate it in place and fail on any diff.
+      # Dependabot PRs are fixed automatically by dependabot-requirements.yml.
+      - name: Regenerate requirements.txt and compare
+        run: |
+          uv export --frozen --no-dev --extra all --extra apo --no-emit-project --format requirements-txt -o requirements.txt
+          if ! git diff --exit-code --stat -- requirements.txt; then
+            echo "::error file=requirements.txt::requirements.txt is out of date with uv.lock. Regenerate it with: uv export --frozen --no-dev --extra all --extra apo --no-emit-project --format requirements-txt -o requirements.txt"
+            exit 1
+          fi
+
   type-check:
     name: Type Check
     runs-on: ubuntu-latest
@@ -118,7 +140,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [lint, type-check, security, test]
+    needs: [lint, requirements-sync, type-check, security, test]
     steps:
       - uses: actions/checkout@v4
 

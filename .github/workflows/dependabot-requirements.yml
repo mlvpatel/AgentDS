@@ -1,0 +1,58 @@
+name: Regenerate requirements.txt for Dependabot
+
+# Dependabot updates pyproject.toml and uv.lock but not requirements.txt, which
+# is generated from uv.lock. This regenerates it on Dependabot's PRs and commits
+# the result to the PR branch.
+#
+# Dependabot-triggered `pull_request` workflows only get a read-only token, so
+# this uses `pull_request_target`, which runs this file as it is on the base
+# branch with a token that can write. To keep that safe:
+#   - it only runs for PRs opened by dependabot[bot] from this repository;
+#   - write access is limited to repository contents, for this one job;
+#   - it never runs code from the PR: `uv export --frozen` only reads uv.lock.
+#
+# A commit pushed with GITHUB_TOKEN does not start new workflow runs, so CI is
+# not re-run on the regenerated commit.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - uv.lock
+
+permissions: {}
+
+jobs:
+  regenerate:
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the Dependabot branch
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.11.32"
+
+      - name: Regenerate requirements.txt from uv.lock
+        run: uv export --frozen --no-dev --extra all --extra apo --no-emit-project --format requirements-txt -o requirements.txt
+
+      - name: Commit and push if it changed
+        run: |
+          if git diff --quiet -- requirements.txt; then
+            echo "requirements.txt already matches uv.lock"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add requirements.txt
+          git commit -m "Regenerate requirements.txt from uv.lock"
+          git push
