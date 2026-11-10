@@ -47,7 +47,7 @@ openai>=1.50.0
 # =============================================================================
 litestar>=2.14.0
 gradio>=5.49.0
-uvicorn[standard]>=0.34.0
+uvicorn[standard]>=0.54.0
 httpx>=0.28.0
 sse-starlette>=2.0.0
 websockets>=13.0.0
